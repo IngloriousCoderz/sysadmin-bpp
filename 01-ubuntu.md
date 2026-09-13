@@ -280,29 +280,41 @@ sudo delgroup corso-group
 | SGID (Set Group ID) | 2000          | g+s (---rws---)     | Esegue il file con i permessi del gruppo del file.                             | I nuovi file/cartelle creati all'interno ereditano il gruppo della directory padre.                |
 | Sticky Bit          | 1000          | o+t (------rwt)     | Nessun effetto sui file moderni.                                               | Solo il proprietario di un file (o root) può cancellarlo o rinominarlo all'interno della cartella. |
 
-Il comando `passwd`deve modificare `/etc/shadow` (file leggibile solo da `root`). Grazie al bit SUID, un utente normale può cambiare la propria password:
+#### SUID
+
+Il problema senza SUID: Un utente standard deve poter cambiare la propria password. La password cifrata risiede nel file `/etc/shadow`, che per motivi di sicurezza è leggibile e modificabile esclusivamente dall'utente `root`. Se un utente normale lanciasse il comando `/usr/bin/passwd`, il sistema operativo bloccherebbe l'operazione con un errore di "Permesso Negato", rendendo impossibile per chiunque modificare la propria password senza l'intervento di un amministratore.
+
+La soluzione con SUID: Applicando il bit SUID al file eseguibile (`/usr/bin/passwd`), il sistema operativo esegue quel determinato programma con i privilegi del proprietario del file (`root`), anziché con i privilegi limitati dell'utente che lo ha digitato. Questo permette al comando di accedere temporaneamente a `/etc/shadow`, ma solo ed esclusivamente nei modi e nei limiti previsti dal codice di quel programma.
 
 ```bash
 ls -l /etc/shadow # scrivibile solo da root
 ls -l /usr/bin/passwd # SUID per modificare la propria password
 ```
 
-```bash
-mkdir ~/lab_special && cd ~/lab_special
-# 1. Applica lo Sticky Bit (es. come avviene in /tmp)
-chmod 1777 .   # Corrisponde a chmod +t .
-ls -ld .       # Noterai drwxrwxrwt (la 't' finale)
+Il Rischio di Sicurezza da Evitare: Se un amministratore imposta sbadatamente il bit SUID su un interprete di comandi o su un editor di testo (ad esempio vim, find o bash), qualsiasi utente non privilegiato potrà sfruttare quel programma per eseguire comandi arbitrari o leggere qualsiasi file di sistema come root, ottenendo la Privilege Escalation totale sulla macchina.
 
-# 2. Applica il bit SGID per forzare l'ereditarietà del gruppo
-chmod 2775 .   # Corrisponde a chmod g+s .
-ls -ld .       # Noterai drwxrwsr-x (la 's' nel gruppo)
-
-```
+#### SGID
 
 Il problema senza SGID: Se tre colleghi lavorano nella cartella `/progetti/` (di proprietà del gruppo `sviluppatori`), ogni volta che l'utente `mario` crea un file, quel file appartiene al suo gruppo primario (`mario`). Gli altri colleghi non possono modificarlo finché `mario` non cambia manualmente il gruppo del file.
 
 La soluzione con SGID: Applicando il bit SGID alla cartella (`chmod g+s /progetti/`), il sistema operativo forza tutti i nuovi file creati all'interno ad ereditare automaticamente il gruppo della cartella padre (`sviluppatori`), indipendentemente da chi li crea.
 
+```bash
+mkdir ~/lab_special && cd ~/lab_special
+
+# 2. Applica il bit SGID per forzare l'ereditarietà del gruppo
+chmod 2775 .   # Corrisponde a chmod g+s .
+ls -ld .       # Noterai drwxrwsr-x (la 's' nel gruppo)
+```
+
+#### Sticky Bit
+
 Il problema senza Sticky Bit: Nella cartella temporanea `/tmp`, tutti gli utenti hanno i permessi di scrittura per poter creare i propri file di lavoro. Tuttavia, in POSIX standard, chiunque abbia i permessi di scrittura su una cartella può cancellare qualsiasi file al suo interno, anche se appartiene a un altro utente. Senza Sticky Bit, `mario` potrebbe cancellare i file temporanei di `luigi`.
 
 La soluzione con Sticky Bit: Lo Sticky Bit impedisce agli utenti di cancellare o rinominare file che non gli appartengono. In una cartella con Sticky Bit attiva, solo il proprietario del singolo file (o `root`) può eliminarlo.
+
+```bash
+# 1. Applica lo Sticky Bit (es. come avviene in /tmp)
+chmod 1777 .   # Corrisponde a chmod +t .
+ls -ld .       # Noterai drwxrwxrwt (la 't' finale)
+```
