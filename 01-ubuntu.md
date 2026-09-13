@@ -318,3 +318,158 @@ La soluzione con Sticky Bit: Lo Sticky Bit impedisce agli utenti di cancellare o
 chmod 1777 .   # Corrisponde a chmod +t .
 ls -ld .       # Noterai drwxrwxrwt (la 't' finale)
 ```
+
+## Systemd
+
+I servizi su Linux spesso girano in background con troppi permessi. Se un attaccante buca il servizio, può accedere al resto del file system.
+
+Systemd permette di creare una "bolla" di protezione attorno al processo, impedendogli di toccare il file system o la home anche se il processo ci prova.
+
+Le direttive di isolamento principali sono:
+
+- `ProtectSystem=strict`: Monta l'intero file system in sola lettura per il servizio. Per consentire la scrittura in specifiche cartelle (es. log o dati), si usano le direttive `ReadWritePaths=` o `StateDirectory=`.
+- `ProtectHome=true`: Rende del tutto invisibili e inaccessibili le directory `/home`, `/root` e `/run/user`.
+- `PrivateTmp=true`: Isola la cartella /tmp del servizio tramite un namespace dedicato, impedendo a processi malevoli di leggere o manipolare i file temporanei dell'applicazione.
+- `NoNewPrivileges=true`: Disabilita l'acquisizione di nuovi privilegi da parte del processo e dei suoi figli (ignora i bit SUID/SGID sui binari eseguiti).
+- `CapabilityBoundingSet=`: Definisce ed limita le Capabilities del kernel concedibili al processo (es. impedisce di associare porte sotto la 1024 o di modificare l'orologio di sistema).
+
+```bash
+sudo vim /etc/systemd/system/test-hardening.service # crea la configurazione per un servizio fittizio
+```
+
+```ini
+[Unit]
+Description=Test Hardening Systemd
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start test-hardening.service
+```
+
+Il file è stato creato nella directory `root`. Ora:
+
+```bash
+sudo vim /etc/systemd/system/test-hardening.service # aggiungi direttive di hardening
+```
+
+```ini
+[Unit]
+Description=Test Hardening Systemd
+
+[Service]
+Type=oneshot # avvia una volta sola, non serve spegnere il servizio
+ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
+
+# DIRETTIVE DI HARDENING
+ProtectSystem=strict # monta tutto il sistema operativo (/usr, /boot, /etc) in modalità Read-Only per questo processo
+ProtectHome=true # rende le cartelle /root e /home del tutto invisibili al servizio
+```
+
+```bash
+sudo rm -f /root/test.txt
+sudo systemctl daemon-reload
+sudo systemctl start test-hardening.service # errore!
+```
+
+```bash
+systemd-analyze security test-hardening.service # 9.0 UNSAFE!
+```
+
+Protezione completa:
+
+```bash
+sudo vim /etc/systemd/system/test-hardening.service
+```
+
+```ini
+[Unit]
+Description=Test Hardening Systemd
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
+
+# ISOLAMENTO UTENTE E RETE
+# Genera un utente e gruppo effimeri e dedicati per la durata del servizio
+DynamicUser=yes
+# Isola completamente lo stack di rete (crea un loopback vuoto dedicato)
+PrivateNetwork=true
+# Crea un namespace utente separato dal resto del sistema
+PrivateUsers=true
+# Blocca qualsiasi traffico IP in ingresso e in uscita
+IPAddressDeny=any
+# Permessi file visibili solo dall'utente del servizio
+UMask=0077
+
+# PROTEZIONI FILE SYSTEM
+# Rende l'intero file system in sola lettura (/usr, /boot, /etc, ecc.)
+ProtectSystem=strict
+# Nasconde completamente le directory /home, /root e /run/user
+ProtectHome=true
+# Assegna una cartella /tmp e /var/tmp privata e isolata dagli altri processi
+PrivateTmp=true
+# Blocca l'accesso ai dispositivi fisici in /dev
+PrivateDevices=true
+# Applica la policy restrittiva per l'accesso ai dispositivi
+DevicePolicy=closed
+# Rende in sola lettura le variabili del kernel in /proc/sys e /sys
+ProtectKernelTunables=true
+# Impedisce al servizio di caricare o scaricare moduli del kernel
+ProtectKernelModules=true
+# Rende in sola lettura la gerarchia dei cgroups in /sys/fs/cgroup
+ProtectControlGroups=true
+
+# ISOLAMENTO KERNEL E PROC
+# Impedisce al servizio di modificare l'ora di sistema
+ProtectClock=true
+# Blocca l'accesso al buffer dei log del kernel (dmesg)
+ProtectKernelLogs=true
+# Nasconde i processi degli altri utenti in /proc
+ProtectProc=invisible
+# Restringe /proc mostrando solo i dati dei PID
+ProcSubset=pid
+# Impedisce al servizio di cambiare l'hostname della macchina
+ProtectHostname=true
+
+# PROTEZIONI PRIVILEGI ED ESECUZIONE
+# Impedisce al processo di acquisire nuovi privilegi (ignora SUID/SGID)
+NoNewPrivileges=true
+# Rimuove tutte le Linux Capabilities (nessun potere da root)
+CapabilityBoundingSet=
+# Impedisce l'uso dello scheduling in tempo reale
+RestrictRealtime=true
+# Vieta la creazione di file con bit SUID o SGID attivi
+RestrictSUIDSGID=true
+# Blocca il cambio dell'ABI del kernel
+LockPersonality=true
+# Blocca pagine di memoria contemporaneamente scrivibili ed eseguibili
+MemoryDenyWriteExecute=true
+
+# FILTRO SYSCALL E NAMESPACES
+# Permette solo le system call minime indispensabili per i servizi standard
+SystemCallFilter=@system-service
+# Blocca esplicitamente gruppi di chiamate di sistema pericolose
+SystemCallFilter=~@resources @privileged @mount @debug @clock @module @reboot @swap
+# Disabilita la creazione di nuovi namespace Linux
+RestrictNamespaces=true
+# Impedisce l'apertura di qualsiasi socket di rete
+RestrictAddressFamilies=none
+# Disabilita le system call per architetture diverse da quella nativa
+SystemCallArchitectures=native
+```
+
+```bash
+systemd-analyze security test-hardening.service # 0.2 SAFE!
+```
+
+Per ripristinare il tutto:
+
+```bash
+sudo rm -f /etc/systemd/system/test-hardening.service
+sudo systemctl daemon-reload
+```
