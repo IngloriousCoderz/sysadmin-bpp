@@ -1,17 +1,5 @@
 # Ubuntu
 
-_su UTM_
-crea nuovo indirizzo MAC
-
-_sulla VM_
-imposta keyboard in inglese
-
-```bash
-sudo apt update
-sudo apt upgrade
-ip a # 192.168.64.2
-```
-
 ## SSH
 
 _sul Mac_
@@ -21,9 +9,7 @@ ssh-keygen -t ed25519 -C "admin-corso"
 ssh-copy-id -i ~/.ssh/admin-corso_ed25519.pub ubuntu@192.168.64.2
 ```
 
-### Se per qualche ragione il comando dovesse fallire, possiamo farlo a mano
-
-Ad esempio, se abbiamo fatto hardening prima ancora di copiare la chiave
+Se per qualche ragione il comando dovesse fallire, possiamo farlo a mano (ad esempio, se abbiamo fatto hardening prima ancora di copiare la chiave):
 
 ```bash
 cat admin-corso_ed25519.pub # copia il testo della chiave pubblica
@@ -219,7 +205,9 @@ sudo aa-disable /usr/bin/curl
 sudo rm -f /etc/apparmor.d/usr.bin.curl
 ```
 
-### Sottosezione Didattica: Il motore apparmor_parser
+### Il motore apparmor_parser
+
+Sotto la scocca, `aa-enforce` e `aa-complain` usano `apparmor_parser`.
 
 AppArmor non legge i file di testo in `/etc/apparmor.d/` a ogni chiamata di sistema. L'utility `apparmor_parser` traduce la sintassi del profilo in una tabella binaria (automa a stati finiti) e la carica direttamente nello spazio di memoria del Kernel via securityfs.
 
@@ -227,63 +215,3 @@ AppArmor non legge i file di testo in `/etc/apparmor.d/` a ogni chiamata di sist
 - `apparmor_parser -r /etc/apparmor.d/profilo` (Replace/Reload): Ricompila e sostituisce un profilo già attivo. È il comando fondamentale per applicare modifiche senza riavviare la macchina o il servizio.
 - `apparmor_parser -R /etc/apparmor.d/profilo` (Remove): Scarica il profilo dalla memoria del kernel.
 - `sudo apparmor_parser -S /etc/apparmor.d/profilo > /dev/null` (Stdout/Check): Compila il profilo in stdout (utilissimo per testare il profilo prima del deploy).
-
-# Httpd
-
-```bash
-sudo apt update
-sudo apt upgrade
-sudo apt install apache2
-sudo sysctl enable --now apache2
-```
-
-# Tomcat
-
-```bash
-sudo apt install default-jdk
-java -version
-
-sudo groupadd tomcat
-sudo useradd -s /bin/false -g tomcat -d /opt/tomcat tomcat
-
-cd /tmp
-curl -O https://dlcdn.apache.org/tomcat/tomcat-10/v10.1.59/bin/apache-tomcat-10.1.59.tar.gz
-sudo mkdir -p /opt/tomcat
-sudo tar xzvf apache-tomcat-10.1.59.tar.gz -C /opt/tomcat --strip-components=1
-
-cd /opt/tomcat
-sudo chgrp -R tomcat /opt/tomcat
-sudo chmod -R g+r conf
-sudo chmod g+x conf
-sudo chown -R tomcat webapps/ work/ temp/ logs/
-
-sudo vim /etc/systemd/system/tomcat.service
-```
-
-```ini
-[Unit]
-Description=Apache Tomcat Web Application Container
-After=network.target
-
-[Service]
-Type=forking
-
-User=tomcat
-Group=tomcat
-
-Environment="JAVA_HOME=/usr/lib/jvm/default-java"
-Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
-Environment="CATALINA_HOME=/opt/tomcat"
-Environment="CATALINA_BASE=/opt/tomcat"
-
-ExecStart=/opt/tomcat/bin/startup.sh
-ExecStop=/opt/tomcat/bin/shutdown.sh
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now tomcat
-```
