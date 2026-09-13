@@ -271,3 +271,38 @@ rm ~/test_permessi.txt
 sudo deluser corso-user
 sudo delgroup corso-group
 ```
+
+### Bit speciali
+
+| Bit                 | Valore Ottale | Notazione Simbolica | Effetto su File                                                                | Effetto su Directory                                                                               |
+| ------------------- | ------------- | ------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| SUID (Set User ID)  | 4000          | u+s (rws------)     | Esegue il file con i permessi del proprietario del file, non di chi lo lancia. | Nessun effetto significativo su Linux.                                                             |
+| SGID (Set Group ID) | 2000          | g+s (---rws---)     | Esegue il file con i permessi del gruppo del file.                             | I nuovi file/cartelle creati all'interno ereditano il gruppo della directory padre.                |
+| Sticky Bit          | 1000          | o+t (------rwt)     | Nessun effetto sui file moderni.                                               | Solo il proprietario di un file (o root) può cancellarlo o rinominarlo all'interno della cartella. |
+
+Il comando `passwd`deve modificare `/etc/shadow` (file leggibile solo da `root`). Grazie al bit SUID, un utente normale può cambiare la propria password:
+
+```bash
+ls -l /etc/shadow # scrivibile solo da root
+ls -l /usr/bin/passwd # SUID per modificare la propria password
+```
+
+```bash
+mkdir ~/lab_special && cd ~/lab_special
+# 1. Applica lo Sticky Bit (es. come avviene in /tmp)
+chmod 1777 .   # Corrisponde a chmod +t .
+ls -ld .       # Noterai drwxrwxrwt (la 't' finale)
+
+# 2. Applica il bit SGID per forzare l'ereditarietà del gruppo
+chmod 2775 .   # Corrisponde a chmod g+s .
+ls -ld .       # Noterai drwxrwsr-x (la 's' nel gruppo)
+
+```
+
+Il problema senza SGID: Se tre colleghi lavorano nella cartella `/progetti/` (di proprietà del gruppo `sviluppatori`), ogni volta che l'utente `mario` crea un file, quel file appartiene al suo gruppo primario (`mario`). Gli altri colleghi non possono modificarlo finché `mario` non cambia manualmente il gruppo del file.
+
+La soluzione con SGID: Applicando il bit SGID alla cartella (`chmod g+s /progetti/`), il sistema operativo forza tutti i nuovi file creati all'interno ad ereditare automaticamente il gruppo della cartella padre (`sviluppatori`), indipendentemente da chi li crea.
+
+Il problema senza Sticky Bit: Nella cartella temporanea `/tmp`, tutti gli utenti hanno i permessi di scrittura per poter creare i propri file di lavoro. Tuttavia, in POSIX standard, chiunque abbia i permessi di scrittura su una cartella può cancellare qualsiasi file al suo interno, anche se appartiene a un altro utente. Senza Sticky Bit, `mario` potrebbe cancellare i file temporanei di `luigi`.
+
+La soluzione con Sticky Bit: Lo Sticky Bit impedisce agli utenti di cancellare o rinominare file che non gli appartengono. In una cartella con Sticky Bit attiva, solo il proprietario del singolo file (o `root`) può eliminarlo.
