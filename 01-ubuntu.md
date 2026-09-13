@@ -215,3 +215,59 @@ AppArmor non legge i file di testo in `/etc/apparmor.d/` a ogni chiamata di sist
 - `apparmor_parser -r /etc/apparmor.d/profilo` (Replace/Reload): Ricompila e sostituisce un profilo già attivo. È il comando fondamentale per applicare modifiche senza riavviare la macchina o il servizio.
 - `apparmor_parser -R /etc/apparmor.d/profilo` (Remove): Scarica il profilo dalla memoria del kernel.
 - `sudo apparmor_parser -S /etc/apparmor.d/profilo > /dev/null` (Stdout/Check): Compila il profilo in stdout (utilissimo per testare il profilo prima del deploy).
+
+## POSIX
+
+Notazione Ottale dei Permessi: Ciascuna delle tre cifre definisce i permessi per tre classi distinte: Utente/Proprietario (u), Gruppo (g), e Altri (o).
+
+- 4 = Lettura (r)
+- 2 = Scrittura (w)
+- 1 = Esecuzione (x)
+- Sommando i valori si compongono i permessi: ad esempio 7 (4 + 2 + 1) indica tutti i permessi, 6 (4 + 2) indica lettura e scrittura, 5 (4 + 1) indica lettura ed esecuzione.
+
+Permessi Comuni da Memorizzare:
+
+- 644 (rw-r--r--): Standard per i file di testo/configurazione.
+- 755 (rwxr-xr-x): Standard per gli eseguibili e le directory (l'accesso ad una directory richiede il bit x).
+- 700 (rwx------) / 600 (rw-------): Riservati a directory e file sensibili (es. la directory .ssh o le chiavi private).
+
+```bash
+sudo addgroup corso-group
+sudo adduser --system --no-create-home --ingroup corso-group corso-user
+```
+
+L'opzione --system (o -system) indica ad adduser di creare un account di sistema anziché un utente umano standard.
+
+Le differenze chiave tra Utente Umano e Utente di Sistema
+
+- ID Utente (UID) riservato:
+  Nei sistemi basati su Debian/Ubuntu, gli utenti umani ricevono un UID da 1000 in poi (il tuo primo utente ha UID 1000). Gli utenti di sistema ricevono un UID compreso nell'intervallo 100-999 riservato al sistema operativo.
+- Nessun aggiornamento delle scadenze:
+  Gli account di sistema non sono soggetti alle politiche di scadenza della password di /etc/login.defs.
+- Creazione pulita per i servizi:
+  Indica al sistema che l'account serve unicamente per isolare un processo o un demone (come nginx, postgres o il nostro tomcat), senza sovraccaricare la macchina con configurazioni da utente desktop.
+
+```bash
+touch ~/test_permessi.txt
+# Imposta proprietario e gruppo in un solo comando
+sudo chown corso-user:corso-group ~/test_permessi.txt
+ls -l ~/test_permessi.txt
+# In alternativa, per cambiare solo il gruppo:
+sudo chgrp corso-group ~/test_permessi.txt
+```
+
+```bash
+# 1. Permessi standard per file di testo (Proprietario: rw, Gruppo: r, Altri: r)
+chmod 644 ~/test_permessi.txt
+ls -l ~/test_permessi.txt
+# 2. Rendi il file eseguibile solo per il proprietario (Proprietario: rwx, Gruppo: r, Altri: r)
+chmod 744 ~/test_permessi.txt
+# 3. Restringi l'accesso esclusivamente al proprietario
+chmod 600 ~/test_permessi.txt
+```
+
+```bash
+rm ~/test_permessi.txt
+sudo deluser corso-user
+sudo delgroup corso-group
+```
