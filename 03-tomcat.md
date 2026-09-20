@@ -27,20 +27,36 @@ sudo vim /etc/systemd/system/tomcat.service
 
 ```ini
 [Unit]
+# Descrizione sintetica del servizio visualizzata nei log e tramite 'systemctl status'
 Description=Tomcat
+# Garantisce che Tomcat venga avviato solo DOPO che lo stack di rete del sistema operativo è completamente attivo
 After=network.target
 
 [Service]
+# Indica a systemd che il processo avviato farà il fork (spawn) di un processo figlio e poi il genitore terminerà (comportamento tipico degli script startup.sh)
 Type=forking
+
+# Utente di sistema non privilegiato con cui verrà eseguito il processo Java
 User=tomcat
+# Gruppo di sistema associato all'utente per la gestione dei permessi su file e directory
 Group=tomcat
+
+# Variabile d'ambiente che indica la root della Java Development Kit (JDK) utilizzata per eseguire Tomcat
 Environment="JAVA_HOME=/usr/lib/jvm/default-java"
+# Variabile d'ambiente che definisce la directory principale in cui è installato il binario di Tomcat
 Environment="CATALINA_HOME=/opt/tomcat"
+# Variabile d'ambiente che definisce la directory di lavoro dell'istanza specifica (conf, logs, webapps, temp, work)
 Environment="CATALINA_BASE=/opt/tomcat"
+# Definisce la posizione del file PID (Process ID) per consentire agli script di arrestare o killare con certezza il processo Java
+Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
+
+# Comando o script da eseguire per avviare il servizio Tomcat
 ExecStart=/opt/tomcat/bin/startup.sh
+# Comando o script da eseguire per arrestare in modo pulito il servizio Tomcat
 ExecStop=/opt/tomcat/bin/shutdown.sh
 
 [Install]
+# Definisce il "target" (livello di esecuzione) a cui agganciare il servizio quando viene abilitato con 'systemctl enable' (multi-user corrisponde alla normale modalità server senza GUI)
 WantedBy=multi-user.target
 ```
 
@@ -296,7 +312,7 @@ sudo vim /etc/systemd/system/tomcat.service
 
 ```ini
 [Unit]
-Description=Apache Tomcat Web Application Container
+Description=Tomcat
 After=network.target
 
 [Service]
@@ -313,29 +329,50 @@ Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
 ExecStart=/opt/tomcat/bin/startup.sh
 ExecStop=/opt/tomcat/bin/shutdown.sh
 
+# RIAVVIO AUTOMATICO
+Restart=on-failure
+RestartSec=5s
+
 # DIRECTORY CONCESSE IN SCRITTURA
+# Rende scrivibili solo ed esclusivamente le cartelle specificate, necessarie al funzionamento di Tomcat
 ReadWritePaths=/opt/tomcat/logs /opt/tomcat/temp /opt/tomcat/work
 
 # HARDENING ISOLAMENTO
+# Rende l'intero file system del sistema operativo in sola lettura per il servizio
 ProtectSystem=strict
+# Impedisce del tutto l'accesso alle directory personali degli utenti (/home, /root, /run/user)
 ProtectHome=true
+# Monta un file system /tmp privato e isolato, inaccessibile agli altri processi di sistema
 PrivateTmp=true
+# Nasconde i dispositivi fisici (/dev) al servizio, lasciando visibili solo i pseudo-dispositivi essenziali (es. /dev/null, /dev/urandom)
 PrivateDevices=true
+# Rende in sola lettura le variabili del kernel in /proc/sys e /sys, impedendo modifiche a runtime
 ProtectKernelTunables=true
+# Blocca il caricamento e la rimozione esplicita di moduli del kernel Linux da parte del servizio
 ProtectKernelModules=true
+# Rende in sola lettura le gerarchie di cgroups (/sys/fs/cgroup) per evitare modifiche ai limiti di risorsa
 ProtectControlGroups=true
 
 # HARDENING PRIVILEGI
+# Impedisce al servizio (e a eventuali processi figli) di acquisire nuovi privilegi tramite execution di binary SetUID/SetGID
 NoNewPrivileges=true
+# Rimuove completamente tutte le capabilities di Linux dal processo (impedisce azioni da superuser anche a livello root)
 CapabilityBoundingSet=
+# Disabilita la possibilità di richiedere lo scheduling real-time del kernel Linux
 RestrictRealtime=true
+# Ignora i bit SetUID e SetGID sui file eseguibili lanciati dall'applicazione
 RestrictSUIDSGID=true
+# Blocca la modifica dell'architettura di esecuzione o della personalità del kernel via syscall (es. emulazione 32-bit)
 LockPersonality=true
+# Imposta la maschera dei permessi predefinita per i nuovi file creati (rwxr-x---: lettura/scrittura per tomcat, lettura per il gruppo)
 UMask=0027
 
 # FILTRI SYSCALL
+# Consente un set di chiamate di sistema (syscall) standard predefinite e sicure per i servizi di sistema
 SystemCallFilter=@system-service
+# Inverte il filtro (~) e blocca categoricamente i gruppi di syscall pericolose o non necessarie (gestione hardware, clock, reboot, swap, ecc.)
 SystemCallFilter=~@resources @privileged @mount @debug @clock @module @reboot @swap
+# Limita l'esecuzione delle chiamate di sistema esclusivamente all'architettura nativa della macchina (es. x86_64), bloccando quelle a 32-bit
 SystemCallArchitectures=native
 
 [Install]
@@ -394,6 +431,8 @@ CATALINA_OPTS="$CATALINA_OPTS -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
 # 5. DIAGNOSTICA AUTOMATICA OOM (Out Of Memory)
 # Forza la JVM a generare un Heap Dump al momento esatto del crash per analisi post-mortem
 CATALINA_OPTS="$CATALINA_OPTS -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/tomcat/logs/heap_dump.hprof"
+# Termina automaticamente al primo OOM
+CATALINA_OPTS="$CATALINA_OPTS -XX:+ExitOnOutOfMemoryError"
 
 # 6. GC LOGGING (Tracciamento performance Garbage Collection)
 CATALINA_OPTS="$CATALINA_OPTS -Xlog:gc*,gc+phases=debug:file=/opt/tomcat/logs/gc.log:time,uptime,pid:filecount=5,filesize=10m"
@@ -432,6 +471,7 @@ sudo vim /opt/tomcat/webapps/leak/index.jsp
 sudo chown -R tomcat:tomcat /opt/tomcat/webapps/leak
 curl -ik http://localhost:8080/leak/index.jsp # errore 500 dopo 5 curl
 sudo ls -lh /opt/tomcat/logs/ # dovrebbe esserci un file .hprof
+# in teoria il servizio riparte da sé dopo 5 secondi, altrimenti:
 sudo systemctl restart tomcat # svuota la RAM per nuovi test
 ```
 
@@ -441,6 +481,7 @@ sudo vim /opt/tomcat/bin/setenv.sh
 
 ```ini
 # modifica questo:
+# CATALINA_OPTS="$CATALINA_OPTS -Xms512m -Xmx512m"
 CATALINA_OPTS="$CATALINA_OPTS -Xms64m -Xmx64m"
 ```
 
@@ -448,6 +489,7 @@ CATALINA_OPTS="$CATALINA_OPTS -Xms64m -Xmx64m"
 sudo systemctl restart tomcat
 curl -ik http://localhost:8080/leak/index.jsp # errore 500 subito!
 sudo ls -lh /opt/tomcat/logs/ # dovrebbe esserci un file .hprof (da 64MB o poco meno) e gc.log
+# in teoria il servizio riparte da sé dopo 5 secondi, altrimenti:
 sudo systemctl restart tomcat # svuota la RAM per nuovi test
 ```
 
@@ -491,11 +533,15 @@ After=network.target
 
 [Service]
 Type=forking
+
 User=tomcat
 Group=tomcat
+
 Environment="JAVA_HOME=/usr/lib/jvm/default-java"
 Environment="CATALINA_HOME=/opt/tomcat"
 Environment="CATALINA_BASE=/opt/tomcat-instance1" # 2
+Environment="CATALINA_PID=/opt/tomcat-instance1/temp/tomcat.pid" # 2
+
 ExecStart=/opt/tomcat/bin/startup.sh
 ExecStop=/opt/tomcat/bin/shutdown.sh
 
@@ -524,43 +570,70 @@ sudo vim /etc/apache2/sites-available/lb-tomcat.conf
 ```
 
 ```apache
+# VirtualHost per il traffico in chiaro su porta 80 (HTTP)
 <VirtualHost *:80>
+    # Nome di dominio principale associato a questo VirtualHost
     ServerName localhost
+    # Nome di dominio alternativo/secondario gestito dallo stesso VirtualHost
     ServerAlias lb.local
 
+    # Attiva il motore di riscrittura delle URL di Apache
     RewriteEngine On
+    # Verifica la condizione: la richiesta NON sta usando il protocollo HTTPS
     RewriteCond %{HTTPS} off
+    # Reindirizza permanentemente (HTTP 301) qualsiasi URI verso la controparte cifrata HTTPS
     RewriteRule ^/(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
 </VirtualHost>
 
+# VirtualHost per il traffico cifrato su porta 443 (HTTPS)
 <VirtualHost *:443>
+    # Nome di dominio principale
     ServerName localhost
+    # Nome di dominio alternativo/secondario
     ServerAlias lb.local
 
-    # Motore SSL/TLS
+    # MOTORE SSL/TLS
+    # Abilita la cifratura SSL/TLS su questo VirtualHost
     SSLEngine on
+    # Percorso del file contenente il certificato X.509 pubblico
     SSLCertificateFile /etc/ssl/certs/tomcat-lb.crt
+    # Percorso del file contenente la chiave privata associata al certificato
     SSLCertificateKeyFile /etc/ssl/private/tomcat-lb.key
 
-    # Configurazione del Balancer AJP
+    # CONFIGURAZIONE DEL BALANCER AJP
+    # Definizione del gruppo logico di bilanciamento (cluster) con nome "tomcatcluster"
     <Proxy "balancer://tomcatcluster">
+        # Primo nodo del cluster: connessione via AJP su porta 8009, identificato come node1, protetto da password AJP
         BalancerMember "ajp://127.0.0.1:8009" route=node1 secret=MiaPasswordAJP1
+        # Secondo nodo del cluster: connessione via AJP su porta 8010, identificato come node2, protetto da password AJP
         BalancerMember "ajp://127.0.0.1:8010" route=node2 secret=MiaPasswordAJP2
+        # Mantiene l'utente legato allo stesso nodo Tomcat leggendo il suffisso del cookie JSESSIONID (Sticky Sessions)
         ProxySet stickysession=JSESSIONID
     </Proxy>
 
-    # Passaggio dei metadati HTTPS a Tomcat tramite AJP
+    # PASSAGGIO TRAFFICO E METADATI
+    # Mantiene l'header Host originale inviato dal client inoltrandolo intatto a Tomcat
     ProxyPreserveHost On
+    # ESCLUSIONE PROXY: Dice ad Apache di gestire internamente /balancer-manager e NON inviarlo a Tomcat
+    ProxyPass /balancer-manager !
+    # Mappa la radice del sito web (/) verso il cluster di bilanciamento AJP appena definito
     ProxyPass / "balancer://tomcatcluster/"
+    # Riscrive le intestazioni degli URL di risposta inviati da Tomcat per nascondere la struttura interna
     ProxyPassReverse / "balancer://tomcatcluster/"
 
-    # Interfaccia di gestione del cluster (Opzionale)
+    # INTERFACCIA DI GESTIONE DEL CLUSTER (OPZIONALE)
+    # Crea un endpoint web all'URL /balancer-manager
     <Location "/balancer-manager">
+        # Associa all'URL l'handler nativo di Apache per la GUI di monitoraggio del bilanciatore
         SetHandler balancer-manager
+        # Restringe l'accesso alla dashboard di gestione unicamente alle richieste provenienti da localhost
         Require ip 127.0.0.1
     </Location>
 
+    # FILE DI LOG
+    # Percorso del log degli errori specifici per questo VirtualHost
     ErrorLog ${APACHE_LOG_DIR}/lb_ssl_error.log
+    # Percorso del log degli accessi HTTP/HTTPS in formato 'combined'
     CustomLog ${APACHE_LOG_DIR}/lb_ssl_access.log combined
 </VirtualHost>
 ```
