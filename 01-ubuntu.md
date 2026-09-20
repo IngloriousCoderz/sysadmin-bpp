@@ -1,5 +1,24 @@
 # Ubuntu
 
+## Setup
+
+_sul Mac_
+
+1. Installa UTM
+2. Scarica una VM prebuilt dalla gallery
+3. crea nuovo indirizzo MAC
+4. Avvia la VM
+
+_sulla VM_
+
+imposta keyboard in inglese
+
+```bash
+sudo apt update
+sudo apt upgrade
+ip a # 192.168.64.2
+```
+
 ## SSH
 
 _sul Mac_
