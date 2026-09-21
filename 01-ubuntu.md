@@ -11,7 +11,7 @@ _sul Mac_
 
 _sulla VM_
 
-imposta keyboard in inglese
+imposta keyboard in italiano
 
 ```bash
 sudo apt update
@@ -28,10 +28,10 @@ ssh-keygen -t ed25519 -C "admin-corso"
 ssh-copy-id -i ~/.ssh/admin-corso_ed25519.pub ubuntu@192.168.64.2
 ```
 
-Se per qualche ragione il comando dovesse fallire, possiamo farlo a mano (ad esempio, se abbiamo fatto hardening prima ancora di copiare la chiave):
+Se per qualche ragione il comando dovesse fallire (ad esempio, se abbiamo fatto hardening prima ancora di copiare la chiave), possiamo farlo a mano:
 
 ```bash
-cat admin-corso_ed25519.pub # copia il testo della chiave pubblica
+cat ~/.ssh/admin-corso_ed25519.pub # copia il testo della chiave pubblica
 ```
 
 _sulla VM_
@@ -41,26 +41,41 @@ vim ~/.ssh/authorized_keys # incolla il testo della chiave pubblica
 chmod 600 ~/.ssh/authorized_keys
 ```
 
-### Hardening
+### Hardening SSH
 
 _sulla VM_
 
+I file dentro /etc/ssh/sshd_config.d/ vengono letti in **ordine alfabetico** e il parser di OpenSSH **applica il primo valore trovato** per ogni direttiva. Su molte immagini cloud (es. Ubuntu Cloud / AWS / UTM), esiste già un file tipo 50-cloud-init.conf che imposta `PasswordAuthentication yes`. Per assicurarci che la nostra configurazione prevalga, usiamo il prefisso `00-`.
+
+> Nota di sicurezza: Prima di riavviare o ricaricare il servizio SSH, **mantieni sempre aperta una seconda sessione terminale** per evitare di rimanere chiuso fuori dal server in caso di errore.
+
 ```bash
-vim /etc/ssh/sshd_config.d/hardening.conf
+vim /etc/ssh/sshd_config.d/00-hardening.conf
 ```
 
 ```ini
-PermitRootLogin no # richiede un utente non-root, che può fare sudo
-PasswordAuthentication no # previene attacchi brute-froce sulla password
-PubkeyAuthentication yes # abilita l'autenticazione tramie chiave SSH
-X11Forwarding no # riduce la superficie di attacco
-MaxAuthTries 3 # limita il numero massimo di connessioni prima di interromperela comuncazione
-ClientAliveInterval 300 # controlla ogni 5 minuti che la connessione sia attiva
-ClientAliveCountMax 2 # dopo due tentativi, disconnette
+# Richiede un utente non-root che possa usare sudo
+PermitRootLogin no
+# Previene attacchi brute-froce sulle password
+PasswordAuthentication no
+# Abilita l'autenticazione tramie chiave SSH
+PubkeyAuthentication yes
+# Riduce la superficie di attacco disabilitando interfacce grafiche
+X11Forwarding no
+# Limita il numero massimo di tentativi di autenticazione per connessione
+MaxAuthTries 3
+# Controlla ogni 5 minuti che la connessione sia attiva
+ClientAliveInterval 300
+# Disconnette il client se non risponde a 2 controlli consecutivi
+ClientAliveCountMax 2
 ```
 
 ```bash
-sudo sshd -t # verifica che non ci siano errori sintattici`
+# Test sintattico del file di configurazione
+sudo sshd -t
+# Verifica quali impostazioni effettive (valutate) sta usando SSH
+sudo sshd -T | grep -iE 'passwordauthentication|permitrootlogin|pubkeyauthentication'
+# Riavvia il servizio solo dopo aver verificato che tutto sia corretto
 sudo systemctl restart ssh
 ```
 
@@ -91,24 +106,27 @@ ssh ubuntu-lab
 
 ## UFW
 
-UFW non è un firewall reale, ma un'interfaccia utente semplificata (frontend) scritta in Python per gestire la configurazione del filtro pacchetti del kernel Linux (iptables / nftables).
+UFW (_Uncomplicated Firewall_) non è un firewall autonomo, ma un'interfaccia utente semplificata (frontend) scritta in Python per gestire il filtro pacchetti del kernel Linux (ìptables`/`nftables`).
 
-1. Default Deny (Principio del Minimo Privilegio): Bloccare tutto il traffico in ingresso tranne quello esplicitamente autorizzato.
-2. Stateful Firewall: UFW sfrutta il tracciamento delle connessioni del kernel (conntrack). Quando consenti il traffico in uscita (outgoing), la risposta in ingresso viene automaticamente fatta passare senza dover aprire porte extra.
-3. Integrazione con App Profiles: UFW legge i file da /etc/ufw/applications.d/ forniti dai software installati (come apache2 o openssh-server), permettendo di aprire i servizi tramite nome (es. Apache Full) anziché per numeri di porta singoli.
+1. **Default Deny (Principio del Minimo Privilegio)**: Blocca tutto il traffico in ingresso tranne quello esplicitamente autorizzato.
+2. **Stateful Firewall**: UFW sfrutta il tracciamento delle connessioni del kernel (`conntrack`). Quando si consente il traffico in uscita (_outgoing_), la risposta in ingresso viene fatta passare automaticamente.
+3. **Integrazione con App Profiles**: UFW legge i file da `/etc/ufw/applications.d/` forniti dai pacchetti software (come `apache2` o `openssh-server`), permettendo di aprire le porte tramite il nome del servizio.
 
 ```bash
 sudo apt install ufw
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow ssh
+ # Abilitazione di Httpd, una volta installato apache2 (02-httpd.md)
 sudo ufw allow 'Apache Full'
-sudo nano /etc/ufw/applications.d/tomcat
+
+# Creazione di un profilo UFW personalizzato per Tomcat, una volta installato (03-tomcat.md)
+sudo vim /etc/ufw/applications.d/tomcat
 ```
 
 ```ini
 [Tomcat]
-title=Apache Tomcat Servlet Container
+title=Tomcat
 description=Apache Tomcat Application Server (Standalone)
 ports=8080/tcp
 ```
@@ -120,7 +138,7 @@ sudo ufw enable
 sudo ufw status verbose
 ```
 
-Si può anche aggiungere una regola puntualmente sulla porta:
+Si può anche aggiungere una regola puntuale direttamente sulla porta con un commento esplicativo:
 
 ```bash
 sudo ufw allow 8080/tcp comment 'Tomcat HTTP Connector'
@@ -135,12 +153,12 @@ sudo ufw delete N
 
 ## AppArmor
 
-AppArmor è un modulo di sicurezza del kernel Linux basato su Mandatory Access Control (MAC). A differenza dei classici permessi Unix (DAC), che dipendono dall'utente che esegue un file, AppArmor applica regole rigide legate direttamente al percorso del programma (path-based profiling).
+AppArmor è un modulo di sicurezza del kernel Linux basato su _Mandatory Access Control_ (MAC). A differenza dei classici permessi Unix (_Discretionary Access Control_ - DAC), che dipendono dall'utente che esegue un file, AppArmor applica regole rigide legate direttamente al percorso dell'eseguibile (_path-based profiling_).
 
-Anche se un processo viene compromesso o gira come root, AppArmor gli impedirà di eseguire azioni non esplicitamente previste dal suo profilo (es. accedere a /etc/shadow o aprire una shell bash).
+Anche se un processo viene compromesso o gira come `root`, AppArmor gli impedirà di eseguire azioni non esplicitamente previste dal suo profilo (es. accedere a `/etc/shadow` o aprire una shell `/bin/sh`).
 
-1. Enforce (Produzione): AppArmor blocca attivamente qualsiasi chiamata di sistema non autorizzata e la traccia nei log.
-2. Complain (Testing/Sviluppo): AppArmor non blocca le violazioni, ma le permette registrandole nei log di sistema. È indispensabile per creare e collaudare nuovi profili senza interrompere il servizio.
+1. **Enforce (Produzione)**: AppArmor blocca attivamente qualsiasi chiamata di sistema non autorizzata e la traccia nei log.
+2. **Complain (Testing/Sviluppo)**: AppArmor non blocca le violazioni, ma le esegue comunque registrandole nei log di sistema. È indispensabile per collaudare nuovi profili senza interrompere i servizi.
 
 ```bash
 sudo apt update
@@ -148,17 +166,18 @@ sudo apt install -y apparmor-utils
 sudo aa-status
 ```
 
-Per aggiungere cURL in complain:
+Per aggiungere `curl` in modalità _complain_:
 
 ```bash
 sudo aa-autodep /usr/bin/curl # genera lo scheletro del profilo per curl
-# oppure, per una generazione interattiva in base all'utilizzo:
+# oppure, per una generazione interattiva:
 sudo aa-genprof /usr/bin/curl
-sudo aa-complain /usr/bin/curl # mette curl in modalità Complain
+
+sudo aa-complain /usr/bin/curl # imposta la modalità Complain
 sudo aa-status # verifica che il profilo sia in Complain
 ```
 
-Il file autogenerato da `aa-autodep` è il seguente:
+Visualizziamo il file autogenerato:
 
 ```bash
 sudo cat /etc/apparmor.d/usr.bin.curl
@@ -178,7 +197,7 @@ include <tunables/global>
 }
 ```
 
-Per impedire a cURL di accedere al file delle password:
+Per impedire a `curl` di accedere al file `/etc/passwd`:
 
 ```bash
 sudo vim /etc/apparmor.d/usr.bin.curl
@@ -198,77 +217,79 @@ include <tunables/global>
 }
 ```
 
+Applichiamo le regole in modalità Enforce:
+
 ```bash
 sudo aa-enforce /usr/bin/curl
 ```
 
-Per verificarne il funzionamento:
+Per verificarne il funzionamento, apri un terminale per il monitoraggio dei log:
 
 ```bash
 sudo journalctl -kf | grep -i apparmor
-# oppure
+# Oppure:
 sudo dmesg | grep -i apparmor
 ```
 
-Su un altro terminale:
+Da un altro terminale esegui i test:
 
 ```bash
-curl file:///etc/hosts # passato
-curl file:///etc/passwd # bloccato
+curl file:///etc/hosts # consentito
+curl file:///etc/passwd # bloccato da AppArmor!
 ```
 
-Per ripristinare:
+Per ripristinare ed eliminare il profilo di test:
 
 ```bash
 sudo aa-disable /usr/bin/curl
 sudo rm -f /etc/apparmor.d/usr.bin.curl
 ```
 
-### Il motore apparmor_parser
+### Il motore `apparmor_parser`
 
-Sotto la scocca, `aa-enforce` e `aa-complain` usano `apparmor_parser`.
+Sotto il cofano, `aa-enforce` e `aa-complain` utilizzano l'utility `apparmor_parser`.
 
-AppArmor non legge i file di testo in `/etc/apparmor.d/` a ogni chiamata di sistema. L'utility `apparmor_parser` traduce la sintassi del profilo in una tabella binaria (automa a stati finiti) e la carica direttamente nello spazio di memoria del Kernel via securityfs.
+AppArmor non rilegge i file di testo in `/etc/apparmor.d/` a ogni chiamata di sistema. `apparmor_parser` traduce la sintassi del profilo in una tabella binaria (automa a stati finiti) e la carica direttamente nello spazio di memoria del Kernel tramite `securityfs`.
 
-- `apparmor_parser -a /etc/apparmor.d/profilo` (Add): Carica un nuovo profilo in memoria.
-- `apparmor_parser -r /etc/apparmor.d/profilo` (Replace/Reload): Ricompila e sostituisce un profilo già attivo. È il comando fondamentale per applicare modifiche senza riavviare la macchina o il servizio.
-- `apparmor_parser -R /etc/apparmor.d/profilo` (Remove): Scarica il profilo dalla memoria del kernel.
-- `sudo apparmor_parser -S /etc/apparmor.d/profilo > /dev/null` (Stdout/Check): Compila il profilo in stdout (utilissimo per testare il profilo prima del deploy).
+- `sudo apparmor_parser -a /etc/apparmor.d/profilo` (_Add_): Carica un nuovo profilo in memoria.
+- `sudo apparmor_parser -r /etc/apparmor.d/profilo` (_Replace/Reload_): Ricompila e sostituisce un profilo già attivo. È il comando fondamentale per applicare modifiche senza riavviare il servizio.
+- `sudo apparmor_parser -R /etc/apparmor.d/profilo` (_Remove_): Scarica il profilo dalla memoria del kernel.
+- `sudo apparmor_parser -S /etc/apparmor.d/profilo > /dev/null` (_Stdout/Check_): Verifica la sintassi del profilo senza caricarlo nel kernel.
 
-## POSIX
+## Permessi POSIX e Utenti di Servizio
 
-Notazione Ottale dei Permessi: Ciascuna delle tre cifre definisce i permessi per tre classi distinte: Utente/Proprietario (u), Gruppo (g), e Altri (o).
+### Notazione Ottale dei Permessi
 
-- 4 = Lettura (r)
-- 2 = Scrittura (w)
-- 1 = Esecuzione (x)
-- Sommando i valori si compongono i permessi: ad esempio 7 (4 + 2 + 1) indica tutti i permessi, 6 (4 + 2) indica lettura e scrittura, 5 (4 + 1) indica lettura ed esecuzione.
+Ciascuna delle tre cifre definisce i permessi per tre classi: **Proprietario (u)**, **Gruppo (g)**, e **Altri (o)**.
 
-Permessi Comuni da Memorizzare:
+- `4` = Lettura (`r`)
+- `2` = Scrittura (`w`)
+- `1` = Esecuzione (`x`)
 
-- 644 (rw-r--r--): Standard per i file di testo/configurazione.
-- 755 (rwxr-xr-x): Standard per gli eseguibili e le directory (l'accesso ad una directory richiede il bit x).
-- 700 (rwx------) / 600 (rw-------): Riservati a directory e file sensibili (es. la directory .ssh o le chiavi private).
+Sommando i valori si compongono i permessi: ad esempio `7` (`4 + 2 + 1`) indica tutti i permessi, `6` (`4 + 2`) indica lettura e scrittura, `5` (`4 + 1`) indica lettura ed esecuzione.
+
+#### Valori comuni
+
+- `644` (`rw-r--r--`): File di configurazione/testo standard.
+- `755` (`rwxr-xr-x`): Eseguibili e directory (l'accesso/attraversamento di una directory richiede il bit `x`).
+- `700` (`rwx------`) / 600 (`rw-------`): Directory e file sensibili (es. chiavi private SSH).
 
 ```bash
 sudo addgroup corso-group
 sudo adduser --system --no-create-home --ingroup corso-group corso-user
 ```
 
-L'opzione --system (o -system) indica ad adduser di creare un account di sistema anziché un utente umano standard.
+L'opzione `--system` crea un account dedicato esclusivamente a un servizio o demone.
 
-Le differenze chiave tra Utente Umano e Utente di Sistema
+### Differenze chiave tra Utente Umano e Utente di Sistema
 
-- ID Utente (UID) riservato:
-  Nei sistemi basati su Debian/Ubuntu, gli utenti umani ricevono un UID da 1000 in poi (il tuo primo utente ha UID 1000). Gli utenti di sistema ricevono un UID compreso nell'intervallo 100-999 riservato al sistema operativo.
-- Nessun aggiornamento delle scadenze:
-  Gli account di sistema non sono soggetti alle politiche di scadenza della password di /etc/login.defs.
-- Creazione pulita per i servizi:
-  Indica al sistema che l'account serve unicamente per isolare un processo o un demone (come nginx, postgres o il nostro tomcat), senza sovraccaricare la macchina con configurazioni da utente desktop.
+- **UID riservato**: Su Debian/Ubuntu gli utenti umani partono da UID `1000`. Gli utenti di sistema usano l'intervallo `100`-`999`.
+- **Nessuna scadenza password**: Non sono soggetti alle politiche di cambio/scadenza password di `/etc/login.defs`.
+- **Isolamento dei processi**: Riduce i rischi se il processo viene compromesso.
 
 ```bash
 touch ~/test_permessi.txt
-# Imposta proprietario e gruppo in un solo comando
+# Imposta proprietario e gruppo
 sudo chown corso-user:corso-group ~/test_permessi.txt
 ls -l ~/test_permessi.txt
 # In alternativa, per cambiare solo il gruppo:
@@ -276,16 +297,17 @@ sudo chgrp corso-group ~/test_permessi.txt
 ```
 
 ```bash
-# 1. Permessi standard per file di testo (Proprietario: rw, Gruppo: r, Altri: r)
+# Modifica dei permessi
 chmod 644 ~/test_permessi.txt
 ls -l ~/test_permessi.txt
-# 2. Rendi il file eseguibile solo per il proprietario (Proprietario: rwx, Gruppo: r, Altri: r)
 chmod 744 ~/test_permessi.txt
-# 3. Restringi l'accesso esclusivamente al proprietario
+ls -l ~/test_permessi.txt
 chmod 600 ~/test_permessi.txt
+ls -l ~/test_permessi.txt
 ```
 
 ```bash
+# Pulizia
 rm ~/test_permessi.txt
 sudo deluser corso-user
 sudo delgroup corso-group
@@ -293,67 +315,93 @@ sudo delgroup corso-group
 
 ### Bit speciali
 
-| Bit                 | Valore Ottale | Notazione Simbolica | Effetto su File                                                                | Effetto su Directory                                                                               |
-| ------------------- | ------------- | ------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| SUID (Set User ID)  | 4000          | u+s (rws------)     | Esegue il file con i permessi del proprietario del file, non di chi lo lancia. | Nessun effetto significativo su Linux.                                                             |
-| SGID (Set Group ID) | 2000          | g+s (---rws---)     | Esegue il file con i permessi del gruppo del file.                             | I nuovi file/cartelle creati all'interno ereditano il gruppo della directory padre.                |
-| Sticky Bit          | 1000          | o+t (------rwt)     | Nessun effetto sui file moderni.                                               | Solo il proprietario di un file (o root) può cancellarlo o rinominarlo all'interno della cartella. |
+| Bit                       | Valore Ottale | Notazione Simbolica | Effetto su File                                                 | Effetto su Directory                                                                    |
+| ------------------------- | ------------- | ------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **SUID** (_Set User ID_)  | 4000          | `u+s` (`rws------`) | Esegue il file con i privilegi del proprietario del file.       | Nessun effetto significativo su Linux.                                                  |
+| **SGID** (_Set Group ID_) | 2000          | `g+s` (`---rws---`) | Esegue il file con i permessi del gruppo proprietario del file. | I nuovi file/cartelle creati all'interno ereditano il gruppo della cartella padre.      |
+| **Sticky Bit**            | 1000          | `o+t` (`------rwt`) | Nessun effetto sui file moderni.                                | Solo il proprietario di un file (o `root`) può eliminarlo o rinominarlo nella cartella. |
 
-#### SUID
+#### SUID in azione
 
-Il problema senza SUID: Un utente standard deve poter cambiare la propria password. La password cifrata risiede nel file `/etc/shadow`, che per motivi di sicurezza è leggibile e modificabile esclusivamente dall'utente `root`. Se un utente normale lanciasse il comando `/usr/bin/passwd`, il sistema operativo bloccherebbe l'operazione con un errore di "Permesso Negato", rendendo impossibile per chiunque modificare la propria password senza l'intervento di un amministratore.
+Un utente deve poter cambiare la propria password, ma le cifrature risiedono in `/etc/shadow` (accessibile solo a `root`). Il binario `/usr/bin/passwd` ha il bit SUID attivo, quindi viene eseguito con i privilegi di `root`, permettendo l'aggiornamento controllato del file.
 
-La soluzione con SUID: Applicando il bit SUID al file eseguibile (`/usr/bin/passwd`), il sistema operativo esegue quel determinato programma con i privilegi del proprietario del file (`root`), anziché con i privilegi limitati dell'utente che lo ha digitato. Questo permette al comando di accedere temporaneamente a `/etc/shadow`, ma solo ed esclusivamente nei modi e nei limiti previsti dal codice di quel programma.
+> **Rischio di sicurezza**: Se si imposta il bit SUID su interpreti di comandi o editor (`bash`, `vim`, `find`), qualsiasi utente potrà effettuare una _Privilege Escalation_ diretta a `root`.
 
 ```bash
-ls -l /etc/shadow # scrivibile solo da root
-ls -l /usr/bin/passwd # SUID per modificare la propria password
+ls -l /etc/shadow # Accessibile solo a root
+ls -l /usr/bin/passwd # Noterai la 's' nei permessi del proprietario ('rwsr-xr-x')
 ```
 
-Il Rischio di Sicurezza da Evitare: Se un amministratore imposta sbadatamente il bit SUID su un interprete di comandi o su un editor di testo (ad esempio vim, find o bash), qualsiasi utente non privilegiato potrà sfruttare quel programma per eseguire comandi arbitrari o leggere qualsiasi file di sistema come root, ottenendo la Privilege Escalation totale sulla macchina.
+#### SGID per cartelle condivise
 
-#### SGID
+Se tre colleghi lavorano nella cartella `/lab_special/` (di proprietà del gruppo `sviluppatori`), ogni volta che l'utente `mario` crea un file, quel file appartiene al suo gruppo primario (`mario`). Gli altri colleghi non possono modificarlo finché `mario` non cambia manualmente il gruppo del file.
 
-Il problema senza SGID: Se tre colleghi lavorano nella cartella `/progetti/` (di proprietà del gruppo `sviluppatori`), ogni volta che l'utente `mario` crea un file, quel file appartiene al suo gruppo primario (`mario`). Gli altri colleghi non possono modificarlo finché `mario` non cambia manualmente il gruppo del file.
-
-La soluzione con SGID: Applicando il bit SGID alla cartella (`chmod g+s /progetti/`), il sistema operativo forza tutti i nuovi file creati all'interno ad ereditare automaticamente il gruppo della cartella padre (`sviluppatori`), indipendentemente da chi li crea.
+Applicando il bit SGID alla cartella (`chmod g+s /lab_special/`), il sistema operativo forza tutti i nuovi file creati all'interno ad ereditare automaticamente il gruppo della cartella padre (`sviluppatori`), indipendentemente da chi li crea.
 
 ```bash
 mkdir ~/lab_special && cd ~/lab_special
-
-# 2. Applica il bit SGID per forzare l'ereditarietà del gruppo
+# Applica il bit SGID per forzare l'ereditarietà del gruppo
 chmod 2775 .   # Corrisponde a chmod g+s .
-ls -ld .       # Noterai drwxrwsr-x (la 's' nel gruppo)
+ls -ld .       # Noterai 'drwxrwsr-x' (la 's' nel gruppo)
 ```
 
-#### Sticky Bit
+#### Sticky Bit per directory temporanee
 
-Il problema senza Sticky Bit: Nella cartella temporanea `/tmp`, tutti gli utenti hanno i permessi di scrittura per poter creare i propri file di lavoro. Tuttavia, in POSIX standard, chiunque abbia i permessi di scrittura su una cartella può cancellare qualsiasi file al suo interno, anche se appartiene a un altro utente. Senza Sticky Bit, `mario` potrebbe cancellare i file temporanei di `luigi`.
+Nella cartella temporanea `/tmp`, tutti gli utenti hanno i permessi di scrittura per poter creare i propri file di lavoro. Tuttavia, in POSIX standard, chiunque abbia i permessi di scrittura su una cartella può cancellare qualsiasi file al suo interno, anche se appartiene a un altro utente. Senza Sticky Bit, `mario` potrebbe cancellare i file temporanei di `luigi`.
 
-La soluzione con Sticky Bit: Lo Sticky Bit impedisce agli utenti di cancellare o rinominare file che non gli appartengono. In una cartella con Sticky Bit attiva, solo il proprietario del singolo file (o `root`) può eliminarlo.
+Lo Sticky Bit impedisce agli utenti di cancellare o rinominare file che non gli appartengono. In una cartella con Sticky Bit attiva, solo il proprietario del singolo file (o `root`) può eliminarlo.
 
 ```bash
-# 1. Applica lo Sticky Bit (es. come avviene in /tmp)
+# Applica lo Sticky Bit (es. come avviene in /tmp)
 chmod 1777 .   # Corrisponde a chmod +t .
-ls -ld .       # Noterai drwxrwxrwt (la 't' finale)
+ls -ld .       # Noterai 'drwxrwxrwt' (la 't' finale)
 ```
 
-## Systemd
+## Systemd e Hardening dei Servizi
 
-I servizi su Linux spesso girano in background con troppi permessi. Se un attaccante buca il servizio, può accedere al resto del file system.
+I servizi Linux moderni non dovrebbero girare con permessi illimitati. Systemd consente di applicare direttive di isolamento (_sandboxing_) direttamente nell'unit file del servizio.
 
-Systemd permette di creare una "bolla" di protezione attorno al processo, impedendogli di toccare il file system o la home anche se il processo ci prova.
+> **IMPORTANTE SULLA SINTASSI SYSTEMD:**
+> I file di unità systemd **NON supportano i commenti a fine riga** (inline) contrassegnati dal carattere `#`.
+> Qualsiasi carattere `#` inserito a fine riga viene considerato parte del valore della direttiva, compromettendo la configurazione o causando il mancato funzionamento della direttiva stessa. Tutti i commenti devono risiedere su **righe dedicate**.
 
-Le direttive di isolamento principali sono:
+### Le principali direttive di isolamento
 
-- `ProtectSystem=strict`: Monta l'intero file system in sola lettura per il servizio. Per consentire la scrittura in specifiche cartelle (es. log o dati), si usano le direttive `ReadWritePaths=` o `StateDirectory=`.
+- `ProtectSystem=strict`: Monta l'intero file system in sola lettura (`/usr`, `/boot`, `/etc`). Per consentire la scrittura in percorsi specifici (es. log o dati), si usano le direttive `ReadWritePaths=` o `StateDirectory=`.
 - `ProtectHome=true`: Rende del tutto invisibili e inaccessibili le directory `/home`, `/root` e `/run/user`.
-- `PrivateTmp=true`: Isola la cartella /tmp del servizio tramite un namespace dedicato, impedendo a processi malevoli di leggere o manipolare i file temporanei dell'applicazione.
-- `NoNewPrivileges=true`: Disabilita l'acquisizione di nuovi privilegi da parte del processo e dei suoi figli (ignora i bit SUID/SGID sui binari eseguiti).
-- `CapabilityBoundingSet=`: Definisce ed limita le Capabilities del kernel concedibili al processo (es. impedisce di associare porte sotto la 1024 o di modificare l'orologio di sistema).
+- `PrivateTmp=true`: Isola la cartella `/tmp` del servizio tramite un mount namespace dedicato, impedendo a processi malevoli di leggere o manipolare i file temporanei dell'applicazione.
+- `NoNewPrivileges=true`: Impedisce al processo (e ai suoi figli) di acquisire nuovi privilegi (ignora SUID/GUID).
+- `CapabilityBoundingSet=`: Definisce quali Linux Capabilities riservare al processo (es. impedisce di associare porte sotto la 1024 o di modificare l'orologio di sistema).
+
+### Demo Pratica Hardening
+
+Creiamo una prima versione del servizio senza protezioni:
 
 ```bash
-sudo vim /etc/systemd/system/test-hardening.service # crea la configurazione per un servizio fittizio
+sudo vim /etc/systemd/system/test-hardening.service
+```
+
+```ini
+[Unit]
+Description=Test Hardening Systemd
+
+[Service]
+# Service tipo oneshot per eseguire una singola azione
+Type=oneshot
+ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start test-hardening.service
+ls -l /root/test.txt # Il file è stato creato!
+sudo rm -f /root/test.txt
+```
+
+Ora applichiamo le direttive di hardening al servizio (notare che i commenti sono su righe separate):
+
+```bash
+sudo vim /etc/systemd/system/test-hardening.service
 ```
 
 ```ini
@@ -363,43 +411,28 @@ Description=Test Hardening Systemd
 [Service]
 Type=oneshot
 ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl start test-hardening.service
-```
-
-Il file è stato creato nella directory `root`. Ora:
-
-```bash
-sudo vim /etc/systemd/system/test-hardening.service # aggiungi direttive di hardening
-```
-
-```ini
-[Unit]
-Description=Test Hardening Systemd
-
-[Service]
-Type=oneshot # avvia una volta sola, non serve spegnere il servizio
-ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
 
 # DIRETTIVE DI HARDENING
-ProtectSystem=strict # monta tutto il sistema operativo (/usr, /boot, /etc) in modalità Read-Only per questo processo
-ProtectHome=true # rende le cartelle /root e /home del tutto invisibili al servizio
+
+# Monta l'intero sistema operativo in modalità Read-Only per questo processo
+ProtectSystem=strict
+# rende le cartelle /root e /home del tutto invisibili e inaccessibili al servizio
+ProtectHome=true
 ```
 
+Ricarichiamo e testiamo l'errore:
+
 ```bash
-sudo rm -f /root/test.txt
 sudo systemctl daemon-reload
-sudo systemctl start test-hardening.service # errore!
-```
+sudo systemctl start test-hardening.service # Il comando fallirà con errore di Permesso Negato!
 
-```bash
+# Analisi della sicurezza dell'unità
 systemd-analyze security test-hardening.service # 9.0 UNSAFE!
 ```
 
-Protezione completa:
+### Profilo di Hardening Completo (Sandbox Avanzata)
+
+Ecco l'esempio di un file di unità systemd con hardening massimo configurato correttamente (commenti su righe proprie):
 
 ```bash
 sudo vim /etc/systemd/system/test-hardening.service
@@ -407,7 +440,7 @@ sudo vim /etc/systemd/system/test-hardening.service
 
 ```ini
 [Unit]
-Description=Test Hardening Systemd
+Description=Test Hardening Systemd Avanzato
 
 [Service]
 Type=oneshot
@@ -482,11 +515,14 @@ RestrictAddressFamilies=none
 SystemCallArchitectures=native
 ```
 
+Verifica il punteggio di sicurezza:
+
 ```bash
+sudo systemctl daemon-reload
 systemd-analyze security test-hardening.service # 0.2 SAFE!
 ```
 
-Per ripristinare il tutto:
+Per ripristinare il sistema ed eliminare la demo:
 
 ```bash
 sudo rm -f /etc/systemd/system/test-hardening.service

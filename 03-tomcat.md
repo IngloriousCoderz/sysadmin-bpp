@@ -1,19 +1,26 @@
 # Tomcat
 
-## Setup
+## Setup e Installazione
+
+Per garantire che gli script e gli URL rimangano validi nel tempo durante i laboratori, utilizziamo il repository d'archivio ufficiale di Apache.
 
 ```bash
-sudo apt install default-jdk
+sudo apt update
+sudo apt install -y default-jdk
 java -version
 
-sudo groupadd tomcat
-sudo useradd -s /bin/false -g tomcat -d /opt/tomcat tomcat
+# Creazione del gruppo e utente di sistema per Tomcat
+sudo groupadd --system tomcat
+sudo useradd -s /bin/false -g tomcat -d /opt/tomcat tomcat --system tomcat
 
+# Download della release specifica da archive.apache.org
 cd /tmp
-curl -O https://dlcdn.apache.org/tomcat/tomcat-10/v10.1.59/bin/apache-tomcat-10.1.59.tar.gz
-sudo mkdir -p /opt/tomcat
-sudo tar xzvf apache-tomcat-10.1.59.tar.gz -C /opt/tomcat --strip-components=1
+wget https://archive.apache.org/dist/tomcat/tomcat-10/v10.1.60/bin/apache-tomcat-10.1.60.tar.gz
 
+sudo mkdir -p /opt/tomcat
+sudo tar xzvf apache-tomcat-10.1.60.tar.gz -C /opt/tomcat --strip-components=1
+
+# Configurazione dei permessi di base
 cd /opt/tomcat
 sudo chgrp -R tomcat /opt/tomcat
 sudo chmod -R g+r conf
@@ -21,48 +28,9 @@ sudo chmod g+x conf
 sudo chown -R tomcat webapps/ work/ temp/ logs/
 ```
 
-```bash
-sudo vim /etc/systemd/system/tomcat.service
-```
+## Architettura del Container (`server.xml`)
 
-```ini
-[Unit]
-# Descrizione sintetica del servizio visualizzata nei log e tramite 'systemctl status'
-Description=Tomcat
-# Garantisce che Tomcat venga avviato solo DOPO che lo stack di rete del sistema operativo è completamente attivo
-After=network.target
-
-[Service]
-# Indica a systemd che il processo avviato farà il fork (spawn) di un processo figlio e poi il genitore terminerà (comportamento tipico degli script startup.sh)
-Type=forking
-
-# Utente di sistema non privilegiato con cui verrà eseguito il processo Java
-User=tomcat
-# Gruppo di sistema associato all'utente per la gestione dei permessi su file e directory
-Group=tomcat
-
-# Variabile d'ambiente che indica la root della Java Development Kit (JDK) utilizzata per eseguire Tomcat
-Environment="JAVA_HOME=/usr/lib/jvm/default-java"
-# Variabile d'ambiente che definisce la directory principale in cui è installato il binario di Tomcat
-Environment="CATALINA_HOME=/opt/tomcat"
-# Variabile d'ambiente che definisce la directory di lavoro dell'istanza specifica (conf, logs, webapps, temp, work)
-Environment="CATALINA_BASE=/opt/tomcat"
-# Definisce la posizione del file PID (Process ID) per consentire agli script di arrestare o killare con certezza il processo Java
-Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
-
-# Comando o script da eseguire per avviare il servizio Tomcat
-ExecStart=/opt/tomcat/bin/startup.sh
-# Comando o script da eseguire per arrestare in modo pulito il servizio Tomcat
-ExecStop=/opt/tomcat/bin/shutdown.sh
-
-[Install]
-# Definisce il "target" (livello di esecuzione) a cui agganciare il servizio quando viene abilitato con 'systemctl enable' (multi-user corrisponde alla normale modalità server senza GUI)
-WantedBy=multi-user.target
-```
-
-## Architettura e Versioning
-
-Tomcat non è un semplice web server, ma un Servlet Container. La sua architettura è gerarchica:
+Tomcat è un Servlet Container basato su un'architettura gerarchica definita in `conf/server.xml`.
 
 ```bash
 sudo vim /opt/tomcat/conf/server.xml
@@ -72,7 +40,7 @@ sudo vim /opt/tomcat/conf/server.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   =============================================================================
-  APACHE TOMCAT - CONFIGURAZIONE ARCHITETTURALE MAIN (server.xml)
+  APACHE TOMCAT - ARCHITETTURA CORE (server.xml)
   =============================================================================
 -->
 
@@ -83,7 +51,7 @@ sudo vim /opt/tomcat/conf/server.xml
   HARDENING: In produzione impostare port="-1" per disabilitare il socket di shutdown
   e gestire il ciclo di vita del processo esclusivamente via systemd.
 -->
-<Server port="8005" shutdown="SHUTDOWN">
+<Server port="-1" shutdown="SHUTDOWN">
 
   <!--
     ===========================================================================
@@ -276,35 +244,31 @@ sudo vim /opt/tomcat/conf/server.xml
 </Server>
 ```
 
-## Differenze fra Tomcat 9 e Tomcat 10
+## Differenze fra Tomcat 9, 10 e 11
 
-La differenza fondamentale risiede nel passaggio di proprietà dei namespace dalle specifiche Java EE (Oracle) alle specifiche Jakarta EE (Eclipse Foundation).
+Il punto di svolta nelle versioni recenti è il cambio di namespace imposto dalla transizione da Java EE (Oracle) a Jakarta EE (Eclipse Foundation).
 
-| Caratteristica        | Tomcat 9.x           | Tomcat 10.0 / 10.1 / 11.x                      |
-| --------------------- | -------------------- | ---------------------------------------------- |
-| Specifica EE          | Java EE 8            | Jakarta EE 9 / EE 10                           |
-| Namespace dei Package | javax.servlet.\*     | jakarta.servlet.\*                             |
-| Compatibilità         | Applicazioni Legacy  | Applicazioni Moderne (Spring Boot 3+, Jakarta) |
-| Stato                 | Mantenuto ma vecchio | Standard attuale                               |
+| Caratteristica         | Tomcat 9.x                    | Tomcat 10.x                  | Tomcat 11.x            |
+| ---------------------- | ----------------------------- | ---------------------------- | ---------------------- | --- |
+| **Specifica EE**       | Java EE 8                     | Jakarta EE 10                | Jakarta EE 11          |     |
+| **Namespace Package**  | `javax.servlet.*`             | `jakarta.servlet.*`          | `jakarta.servlet.*`    |
+| **Target Applicativo** | Applicazioni Legacy / Java 8+ | App Moderne / Spring Boot 3+ | App Moderne / Java 21+ |
 
-### Il Problema Operativo
+### Strategia di Migrazione (.WAR Legacy)
 
-Un file .war sviluppato per Tomcat 9 (javax.servlet.\*) inviato su Tomcat 10 fallirà all'avvio sollevando un'eccezione java.lang.NoClassDefFoundError o ClassNotFoundException.
-
-### Strategia di Migrazione
+Un file `.war` sviluppato per Tomcat 9 con pacchetti `javax.servlet.*` solleverà eccezioni `ClassNotFoundException`su Tomcat 10 o 11.
 
 1. **Migrazione Codice Sorgente (soluzione ideale)**: Aggiornare il codice e le dipendenze in `pom.xml`/`build.gradle` sostituendo gli import `javax.` con `jakarta.`.
-2. **Tomcat Migration Tool for Jakarta EE (soluzione sysadmin)**: Se hai solo il pacchetto .war compilato e non i sorgenti, Apache fornisce un tool da riga di comando che converte il bytecode in automatico convertendo le chiamate `javax` in `jakarta`:
+2. **Deploy con Conversione Automatica (Tomcat 10.0 legacy)**: Nelle prime versioni di Tomcat 10 era possibile posizionare il file `.war` nella cartella `webapps-javaee/` invece di `webapps/`: Tomcat eseguiva il tool di conversione al volo durante lo scompattamento del WAR.
+3. **Tomcat Migration Tool for Jakarta EE (soluzione sysadmin)**: Se hai solo il pacchetto `.war` compilato e non i sorgenti, Apache fornisce un tool da riga di comando che converte il bytecode in automatico convertendo le chiamate `javax` in `jakarta`:
 
 ```bash
 java -jar jakartaee-migration-\*-shaded.jar /path/to/app-legacy.war /path/to/app-jakarta.war
 ```
 
-3. **Deploy con Conversione Automatica (Tomcat 10.0 legacy)**: Nelle prime versioni di Tomcat 10 era possibile posizionare il file .war nella cartella webapps-javaee/ invece di webapps/: Tomcat eseguiva il tool di conversione al volo durante lo scompattamento del WAR.
+## Systemd Hardening (Single Instance)
 
-## Hardening del Servizio (Systemd)
-
-Applicazione dei vincoli di sicurezza a livello di Kernel Linux per l'unità del container Tomcat.
+Sfruttiamo **Type=simple** eseguendo `catalina.sh run` in foreground. Questo consente a systemd di monitorare direttamente il processo della JVM e gestire il restart automatico in caso di `OutOfMemoryError`.
 
 ```bash
 sudo vim /etc/systemd/system/tomcat.service
@@ -312,32 +276,42 @@ sudo vim /etc/systemd/system/tomcat.service
 
 ```ini
 [Unit]
-Description=Tomcat
+# Descrizione sintetica del servizio visualizzata nei log e tramite 'systemctl status'
+Description=Apache Tomcat Web Application Container
+# Garantisce che Tomcat venga avviato solo DOPO che lo stack di rete del sistema operativo è completamente attivo
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 
+# Utente di sistema non privilegiato con cui verrà eseguito il processo Java
 User=tomcat
+# Gruppo di sistema associato all'utente per la gestione dei permessi su file e directory
 Group=tomcat
 
+# Variabile d'ambiente che indica la root della Java Development Kit (JDK) utilizzata per eseguire Tomcat
 Environment="JAVA_HOME=/usr/lib/jvm/default-java"
+# Variabile d'ambiente che definisce la directory principale in cui è installato il binario di Tomcat
 Environment="CATALINA_HOME=/opt/tomcat"
+# Variabile d'ambiente che definisce la directory di lavoro dell'istanza specifica (conf, logs, webapps, temp, work)
 Environment="CATALINA_BASE=/opt/tomcat"
+# Definisce la posizione del file PID (Process ID) per consentire agli script di arrestare o killare con certezza il processo Java
 Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
 
-ExecStart=/opt/tomcat/bin/startup.sh
-ExecStop=/opt/tomcat/bin/shutdown.sh
+# Esecuzione in foreground diretta gestita da systemd
+ExecStart=/opt/tomcat/bin/catalina.sh run
+# Niente ExecStop
 
-# RIAVVIO AUTOMATICO
+# Gestione ciclo di vita tramite segnali
+KillMode=process
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
 
 # DIRECTORY CONCESSE IN SCRITTURA
 # Rende scrivibili solo ed esclusivamente le cartelle specificate, necessarie al funzionamento di Tomcat
-ReadWritePaths=/opt/tomcat/logs /opt/tomcat/temp /opt/tomcat/work
+ReadWritePaths=/opt/tomcat/logs /opt/tomcat/temp /opt/tomcat/work /opt/tomcat/webapps
 
-# HARDENING ISOLAMENTO
+# ISOLAMENTO FILE SYSTEM E KERNEL
 # Rende l'intero file system del sistema operativo in sola lettura per il servizio
 ProtectSystem=strict
 # Impedisce del tutto l'accesso alle directory personali degli utenti (/home, /root, /run/user)
@@ -353,7 +327,7 @@ ProtectKernelModules=true
 # Rende in sola lettura le gerarchie di cgroups (/sys/fs/cgroup) per evitare modifiche ai limiti di risorsa
 ProtectControlGroups=true
 
-# HARDENING PRIVILEGI
+# ISOLAMENTO PRIVILEGI
 # Impedisce al servizio (e a eventuali processi figli) di acquisire nuovi privilegi tramite execution di binary SetUID/SetGID
 NoNewPrivileges=true
 # Rimuove completamente tutte le capabilities di Linux dal processo (impedisce azioni da superuser anche a livello root)
@@ -367,7 +341,7 @@ LockPersonality=true
 # Imposta la maschera dei permessi predefinita per i nuovi file creati (rwxr-x---: lettura/scrittura per tomcat, lettura per il gruppo)
 UMask=0027
 
-# FILTRI SYSCALL
+# SYSCALL FILTERING
 # Consente un set di chiamate di sistema (syscall) standard predefinite e sicure per i servizi di sistema
 SystemCallFilter=@system-service
 # Inverte il filtro (~) e blocca categoricamente i gruppi di syscall pericolose o non necessarie (gestione hardware, clock, reboot, swap, ecc.)
@@ -376,6 +350,7 @@ SystemCallFilter=~@resources @privileged @mount @debug @clock @module @reboot @s
 SystemCallArchitectures=native
 
 [Install]
+# Definisce il "target" (livello di esecuzione) a cui agganciare il servizio quando viene abilitato con 'systemctl enable' (multi-user corrisponde alla normale modalità server senza GUI)
 WantedBy=multi-user.target
 ```
 
@@ -398,7 +373,9 @@ Le concessioni necessarie che impediscono il punteggio 0.2 sono la rete, le `Rea
   - **Metaspace (`-XX:MetaspaceSize`, `-XX:MaxMetaspaceSize`)**: Metadati delle classi. Se illimitata, i leaker di ClassLoader portano all'OOM Killer del Kernel.
   - **Thread Stack (`-Xss`)**: Allocazione nativa per thread (default 1MB/thread).
 
-$$\text{RAM Totale Processo Java} \approx \text{Heap (-Xmx)} + \text{MaxMetaspace} + (\text{Thread Max} \times \text{-Xss}) + \text{DirectMemory} + \text{CodeCache}$$
+### Formula della Memoria Occupata dal Processo Java
+
+$$\text{RAM Totale Processo} \approx \text{Heap (-Xmx)} + \text{MaxMetaspace} + (\text{MaxThreads} \times \text{-Xss}) + \text{DirectMemory} + \text{CodeCache}$$
 
 ### Tuning tramite setenv.sh
 
@@ -445,7 +422,7 @@ sudo chmod +x /opt/tomcat/bin/setenv.sh
 sudo chown tomcat:tomcat /opt/tomcat/bin/setenv.sh
 ```
 
-### Simulazione e Test di Memory Leak (OOM)
+### Esercitazione: Simulazione Memory Leak e Riavvio Automatico
 
 ```bash
 sudo mkdir -p /opt/tomcat/webapps/leak
@@ -455,25 +432,38 @@ sudo vim /opt/tomcat/webapps/leak/index.jsp
 ```jsp
 <%@ page import="java.util.*" %>
 <%!
-    // Mantiene i riferimenti in memoria per impedire al GC di liberarli
+    // Collezione statica: impedisce al GC di liberare la memoria
     static List<byte[]> memoryBucket = new ArrayList<>();
 %>
 <%
-    // Alloca 100MB di RAM ad ogni singola richiesta
+    // Alloca 100MB di RAM ad ogni invocazione
     for (int i = 0; i < 20; i++) {
         memoryBucket.add(new byte[5 * 1024 * 1024]);
     }
-    out.println("Allocati 100MB in memoria statica. Elementi totali nel bucket: " + memoryBucket.size());
+    out.println("Allocati 100MB in RAM. Elementi totali: " + memoryBucket.size());
 %>
 ```
 
 ```bash
 sudo chown -R tomcat:tomcat /opt/tomcat/webapps/leak
+
+# Pulisci eventuali precedenti dump prima del test
+sudo rm -f /opt/tomcat/logs/*.hprof
+
+sudo systemctl restart tomcat
+# Esegui chiamate ripetute per saturare l'heap
 curl -ik http://localhost:8080/leak/index.jsp # errore 500 dopo 5 curl
-sudo ls -lh /opt/tomcat/logs/ # dovrebbe esserci un file .hprof
-# in teoria il servizio riparte da sé dopo 5 secondi, altrimenti:
-sudo systemctl restart tomcat # svuota la RAM per nuovi test
 ```
+
+Al verificarsi dell'OOM: 1. La JVM scrive il file di dump `/opt/tomcat/logs/heap_dump.hprof`. 2. La flag `-XX:+ExitOnOutOfMemoryError` termina immediatamente il processo Java. 3. Systemd rileva la chiusura con errore e riavvia automaticamente l'istanza dopo 10 secondi.
+
+```bash
+# Verifica della presenza del dump e dei log di riavvio
+ls -lh /opt/tomcat/logs/heap_dump.hprof
+sudo journalctl -u tomcat.service -n 20 --no-pager
+```
+
+Riduciamo ulteriormente la dimensione dell'heap per generare subito OOM:
 
 ```bash
 sudo vim /opt/tomcat/bin/setenv.sh
@@ -486,64 +476,112 @@ CATALINA_OPTS="$CATALINA_OPTS -Xms64m -Xmx64m"
 ```
 
 ```bash
+# Pulisci eventuali precedenti dump prima del test
+sudo rm -f /opt/tomcat/logs/*.hprof
+
 sudo systemctl restart tomcat
 curl -ik http://localhost:8080/leak/index.jsp # errore 500 subito!
 sudo ls -lh /opt/tomcat/logs/ # dovrebbe esserci un file .hprof (da 64MB o poco meno) e gc.log
-# in teoria il servizio riparte da sé dopo 5 secondi, altrimenti:
-sudo systemctl restart tomcat # svuota la RAM per nuovi test
 ```
 
-## Alta Affidabilità: Load Balancing AJP con Apache Httpd
+## Architettura Multi-Istanza Scalabile (tomcat@.service)
 
-### Parte 1: Inizializzazione Multi-Istanze Tomcat
+Invece di duplicare manualmente gli script e perdere le impostazioni di hardening, si utilizza la configurazione **CATALINA_HOME** / **CATALINA_BASE** separando i binari dalle singole istanze operative.
+
+- **CATALINA_HOME** (`/opt/tomcat`): Contiene solo i binari e le librerie condivise (`bin/`, `lib/`).
+  ⚬ **CATALINA_BASE** (`/var/lib/tomcat/instances/`): Contiene la configurazione specifica dell'istanza (`conf/`, `logs/`, `temp/`, `webapps/`, `work/`).
+
+### 1. Preparazione dell'Albero delle Istanze
 
 ```bash
-# Crea le due directory d'istanza
-sudo mkdir -p /opt/tomcat-instance1 /opt/tomcat-instance2
+# Disabilita il servizio singolo
+sudo systemctl stop tomcat
+sudo systemctl disable tomcat
 
-# Copia la struttura base delle configurazioni
-sudo cp -r /opt/tomcat/{conf,logs,temp,webapps,work} /opt/tomcat-instance1/
-sudo cp -r /opt/tomcat/{conf,logs,temp,webapps,work} /opt/tomcat-instance2/
+# Crea le strutture per le istanze node1 e node2
+sudo mkdir -p /var/lib/tomcat/instances/node1
+sudo mkdir -p /var/lib/tomcat/instances/node2
 
-# Assegna i permessi all'utente tomcat
-sudo chown -R tomcat:tomcat /opt/tomcat-instance1 /opt/tomcat-instance2
+# Copia la struttura di base per ogni istanza
+sudo cp -r /opt/tomcat/{conf,logs,temp,webapps,work} /var/lib/tomcat/instances/node1/
+sudo cp -r /opt/tomcat/{conf,logs,temp,webapps,work} /var/lib/tomcat/instances/node2/
 
-sudo vim /opt/tomcat-instance1/conf/server.xml # fare altrettanto con instance2
+# Crea cartelle bin dedicate alle istanze per i loro setenv.sh specifici
+sudo mkdir -p /var/lib/tomcat/instances/node1/bin
+sudo mkdir -p /var/lib/tomcat/instances/node2/bin
+
+# Assegna la proprietà all'utente tomcat
+sudo chown -R tomcat:tomcat /var/lib/tomcat/instances/
+```
+
+### 2. Differenziazione delle Porte nei file `server.xml``
+
+```bash
+sudo vim /opt/tomcat/instances/node1/conf/server.xml # fare altrettanto con node2
 ```
 
 ```ini
-Shutdown port: 8005 # 8006
-Connector HTTP: 8080 # 8081
+Shutdown port: -1
+Connector HTTP: 8081 # 8082
 Connector AJP:
   port 8009 # 8010
   address 127.0.0.1
-  secret MiaPasswordAJP1 # 2
+  secret SecretNodo1 # 2
   secretRequired true
-Engine jvmRoute: node1 # 2
+Engine jvmRoute: node1
 ```
 
+### 3. Creazione del Template Systemd (`tomcat@.service`)
+
+Il carattere `%i` nel template viene sostituito dinamicamente da systemd con il nome dell'istanza passata dopo la `@` (es. `node1`, `node2`).
+
 ```bash
-sudo vim /etc/systemd/system/tomcat-node1.service # fare altrettanto con node2
+sudo vim /etc/systemd/system/tomcat@.service
 ```
 
 ```ini
 [Unit]
-Description=Tomcat Node 1 # 2
+Description=Apache Tomcat Instance %i
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 
 User=tomcat
 Group=tomcat
 
 Environment="JAVA_HOME=/usr/lib/jvm/default-java"
 Environment="CATALINA_HOME=/opt/tomcat"
-Environment="CATALINA_BASE=/opt/tomcat-instance1" # 2
-Environment="CATALINA_PID=/opt/tomcat-instance1/temp/tomcat.pid" # 2
+Environment="CATALINA_BASE=/var/lib/tomcat/instances/%i"
+Environment="CATALINA_PID=/var/lib/tomcat/instances/%i/temp/tomcat.pid"
 
-ExecStart=/opt/tomcat/bin/startup.sh
-ExecStop=/opt/tomcat/bin/shutdown.sh
+ExecStart=/opt/tomcat/bin/catalina.sh run
+
+KillMode=process
+Restart=on-failure
+RestartSec=10s
+
+# ISOLAMENTO DINAMICO: Rende scrivibile solo la cartella dell'istanza specifica %i
+ReadWritePaths=/var/lib/tomcat/instances/%i/logs /var/lib/tomcat/instances/%i/temp /var/lib/tomcat/instances/%i/work /var/lib/tomcat/instances/%i/webapps
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0027
+
+SystemCallFilter=@system-service
+SystemCallFilter=~@resources @privileged @mount @debug @clock @module @reboot @swap
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
@@ -551,31 +589,29 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now tomcat-node1 tomcat-node2
+
+# Avvio e abilitazione delle due istanze
+sudo systemctl enable --now tomcat@node1
+sudo systemctl enable --now tomcat@node2
+
+# Verifica dello stato
+sudo systemctl status tomcat@node1 tomcat@node2
 ```
 
-### Parte 2: Reverse Proxy e Load Balancer su Apache Httpd
+## Integrato: Load Balancing AJP con Apache Httpd
+
+Ora colleghiamo le due istanze Tomcat a un bilanciatore Apache `httpd` con protocollo binario AJP e _Sticky Sessions_.
 
 ```bash
+# Abilitazione dei moduli di bilanciamento su Apache
 sudo a2enmod proxy proxy_ajp proxy_balancer lbmethod_byrequests status ssl rewrite
-sudo systemctl restart apache2
-
-# Genera un certificato SSL Self-Signed
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/ssl/private/tomcat-lb.key \
-  -out /etc/ssl/certs/tomcat-lb.crt \
-  -subj "/CN=localhost"
 
 sudo vim /etc/apache2/sites-available/lb-tomcat.conf
 ```
 
 ```apache
-# VirtualHost per il traffico in chiaro su porta 80 (HTTP)
 <VirtualHost *:80>
-    # Nome di dominio principale associato a questo VirtualHost
     ServerName localhost
-    # Nome di dominio alternativo/secondario gestito dallo stesso VirtualHost
-    ServerAlias lb.local
 
     # Attiva il motore di riscrittura delle URL di Apache
     RewriteEngine On
@@ -585,28 +621,22 @@ sudo vim /etc/apache2/sites-available/lb-tomcat.conf
     RewriteRule ^/(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
 </VirtualHost>
 
-# VirtualHost per il traffico cifrato su porta 443 (HTTPS)
 <VirtualHost *:443>
-    # Nome di dominio principale
     ServerName localhost
-    # Nome di dominio alternativo/secondario
-    ServerAlias lb.local
 
-    # MOTORE SSL/TLS
-    # Abilita la cifratura SSL/TLS su questo VirtualHost
     SSLEngine on
-    # Percorso del file contenente il certificato X.509 pubblico
-    SSLCertificateFile /etc/ssl/certs/tomcat-lb.crt
-    # Percorso del file contenente la chiave privata associata al certificato
-    SSLCertificateKeyFile /etc/ssl/private/tomcat-lb.key
+    SSLCertificateFile /etc/ssl/certs/mini-site-selfsigned.crt
+    SSLCertificateKeyFile /etc/ssl/private/mini-site-selfsigned.key
 
     # CONFIGURAZIONE DEL BALANCER AJP
     # Definizione del gruppo logico di bilanciamento (cluster) con nome "tomcatcluster"
     <Proxy "balancer://tomcatcluster">
         # Primo nodo del cluster: connessione via AJP su porta 8009, identificato come node1, protetto da password AJP
-        BalancerMember "ajp://127.0.0.1:8009" route=node1 secret=MiaPasswordAJP1
+        BalancerMember "ajp://127.0.0.1:8009" route=node1 secret=SecretNodo1
+
         # Secondo nodo del cluster: connessione via AJP su porta 8010, identificato come node2, protetto da password AJP
-        BalancerMember "ajp://127.0.0.1:8010" route=node2 secret=MiaPasswordAJP2
+        BalancerMember "ajp://127.0.0.1:8010" route=node2 secret=SecretNodo2
+
         # Mantiene l'utente legato allo stesso nodo Tomcat leggendo il suffisso del cookie JSESSIONID (Sticky Sessions)
         ProxySet stickysession=JSESSIONID
     </Proxy>
@@ -621,7 +651,7 @@ sudo vim /etc/apache2/sites-available/lb-tomcat.conf
     # Riscrive le intestazioni degli URL di risposta inviati da Tomcat per nascondere la struttura interna
     ProxyPassReverse / "balancer://tomcatcluster/"
 
-    # INTERFACCIA DI GESTIONE DEL CLUSTER (OPZIONALE)
+    # DASHBOARD DI MONITORAGGIO (Accessibile solo in locale)
     # Crea un endpoint web all'URL /balancer-manager
     <Location "/balancer-manager">
         # Associa all'URL l'handler nativo di Apache per la GUI di monitoraggio del bilanciatore
@@ -630,10 +660,7 @@ sudo vim /etc/apache2/sites-available/lb-tomcat.conf
         Require ip 127.0.0.1
     </Location>
 
-    # FILE DI LOG
-    # Percorso del log degli errori specifici per questo VirtualHost
     ErrorLog ${APACHE_LOG_DIR}/lb_ssl_error.log
-    # Percorso del log degli accessi HTTP/HTTPS in formato 'combined'
     CustomLog ${APACHE_LOG_DIR}/lb_ssl_access.log combined
 </VirtualHost>
 ```
@@ -641,7 +668,9 @@ sudo vim /etc/apache2/sites-available/lb-tomcat.conf
 ```bash
 sudo a2dissite mini-site.conf # se era ancora abilitato
 sudo a2ensite lb-tomcat.conf
+sudo apache2ctl configtest
 sudo systemctl reload apache2
+
 sudo curl -ik http://localhost # test redirect HTTP -> HTTPS
 sudo curl -ik https://localhost # test bilanciamento HTTPS
 ```
