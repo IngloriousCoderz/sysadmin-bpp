@@ -104,9 +104,6 @@ vim /etc/apache2/sites-available/mini-site.conf
   </FilesMatch>
 
   # HEADER DI SICUREZZA
-  # HSTS (1 anno): Forza l'uso esclusivo di HTTPS nel browser
-  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-
   # Anti-MIME-Sniffing: Impedisce al browser di "indovinare" il tipo di file (es. eseguire script
   # caricati da utenti mascherati da immagini).
   Header always set X-Content-Type-Options "nosniff"
@@ -117,7 +114,7 @@ vim /etc/apache2/sites-available/mini-site.conf
   # CSP (Content Security Policy): Istruisce il browser a caricare risorse (script, immagini, CSS)
   # esclusivamente dallo stesso dominio ('self'), bloccando attacchi XSS.
   # 'unsafe-inline' è inserito per consentire i CSS interni nella demo
-  Header always set Content-Security-Policy "default-src 'self';"
+  Header always set Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline';"
 
   # PERMESSI DIRECTORY GENERALE
   <Directory /var/www/mini-site/public>
@@ -230,7 +227,7 @@ sudo vim /etc/apache2/sites-available/mini-site.conf
   # Perché Unix Socket? Ha prestazioni superiori e minor overhead di CPU rispetto al socket TCP quando Apache e PHP-FPM girano sulla stessa macchina.
 
   # HEADER DI SICUREZZA
-  # HSTS (1 anno): Forza l'uso esclusivo di HTTPS nel browser
+  # -NUOVO- HSTS (1 anno): Forza l'uso esclusivo di HTTPS nel browser
   Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
   # Anti-MIME-Sniffing: Impedisce al browser di "indovinare" il tipo di file (es. eseguire script
@@ -243,7 +240,7 @@ sudo vim /etc/apache2/sites-available/mini-site.conf
   # CSP (Content Security Policy): Istruisce il browser a caricare risorse (script, immagini, CSS)
   # esclusivamente dallo stesso dominio ('self'), bloccando attacchi XSS.
   # 'unsafe-inline' è inserito per consentire i CSS interni nella demo
-  Header always set Content-Security-Policy "default-src 'self';"
+  Header always set Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline';"
 
   # PERMESSI DIRECTORY
   <Directory /var/www/mini-site/public>
@@ -265,7 +262,7 @@ sudo vim /etc/apache2/sites-available/mini-site.conf
     Require all denied
   </FilesMatch>
 
-  <# Restrizioni IP per l'area di amministrazione
+  # Restrizioni IP per l'area di amministrazione
   <Directory /var/www/mini-site/public/admin>
     Require ip 127.0.0.1
   </Directory>
@@ -330,13 +327,12 @@ curl -I -k https://localhost/protected/
 
 ## Troubleshooting ed Errori Comuni
 
-| Errore HTTP                                                                                               | Causa Principale                                                                               | Messaggio tipico in `error.log`                                                                                         | Soluzione                                                                                                                        |
-| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **503 Service Unavailable**                                                                               | PHP-FPM è spento, il file socket non esiste o ha permessi errati.                              | `(111)Connection refused: AH00957: FCGI: attempt to connect to 127.0.0.1...` oppure `(13)Permission denied: AH01079...` | Verificare che il servizio `php8.1-fpm` sia attivo (`systemctl status`) e che il socket in `/run/php/` esista.                   |
-| **500 Internal Server Error**                                                                             | Sintassi errata nel file `.htaccess` o direttiva non autorizzata da `AllowOverride`.           | `AH00670: Options not allowed here` oppure `Invalid command 'Header'...`                                                | Verificare `AllowOverride` nel VirtualHost o abilitare il modulo mancante (`a2enmod headers`).                                   |
-| **403 Forbidden**                                                                                         | Permessi del File System POSIX restrittivi o direttiva `Require` bloccante.                    | `(13)Permission denied: AH00035: client denied by server configuration`                                                 | Verificare la direttiva `Require all granted` e assicurarsi che l'utente `www-data` possa accedere/leggere le cartelle e i file. |
-| **403 / 500 (Silenzioso)**                                                                                | AppArmor o SELinux bloccano l'accesso a directory non standard (es. `/srv/app` o `/opt/data`). | **AppArmor**: `apparmor="DENIED" operation="open" profile="/usr/sbin/apache2" in /var/log/syslog o dmesg.`              |
-| **AppArmor**: modificare il profilo in `/etc/apparmor.d/` ricaricando le regole con `apparmor_parser -r`. |
+| Errore HTTP                   | Causa Principale                                                                     | Messaggio tipico in `error.log`                                                                                         | Soluzione                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **503 Service Unavailable**   | PHP-FPM è spento, il file socket non esiste o ha permessi errati.                    | `(111)Connection refused: AH00957: FCGI: attempt to connect to 127.0.0.1...` oppure `(13)Permission denied: AH01079...` | Verificare che il servizio `php8.1-fpm` sia attivo (`systemctl status`) e che il socket in `/run/php/` esista.                   |
+| **500 Internal Server Error** | Sintassi errata nel file `.htaccess` o direttiva non autorizzata da `AllowOverride`. | `AH00670: Options not allowed here` oppure `Invalid command 'Header'...`                                                | Verificare `AllowOverride` nel VirtualHost o abilitare il modulo mancante (`a2enmod headers`).                                   |
+| **403 Forbidden**             | Permessi del File System POSIX restrittivi o direttiva `Require` bloccante.          | `(13)Permission denied: AH00035: client denied by server configuration`                                                 | Verificare la direttiva `Require all granted` e assicurarsi che l'utente `www-data` possa accedere/leggere le cartelle e i file. |
+| **403 / 500 (Silenzioso)**    | AppArmor blocca l'accesso a directory non standard (es. `/srv/app` o `/opt/data`).   | `apparmor="DENIED" operation="open" profile="/usr/sbin/apache2" in /var/log/syslog o dmesg.`                            | Modificare il profilo in `/etc/apparmor.d/` ricaricando le regole con `apparmor_parser -r`.                                      |
 
 ## Esercitazioni di Troubleshooting
 
@@ -356,7 +352,7 @@ sudo tail -n 5 /var/log/apache2/mini-site_error.log
 sudo systemctl start php8.1-fpm
 ```
 
-### Simulazione Errore 500 (.htaccess errato)
+### 2. Simulazione Errore 500 (.htaccess errato)
 
 ```bash
 # Provoca l'errore abilitando AllowOverride e inserendo un comando errato:
@@ -386,7 +382,7 @@ sudo chmod 000 /var/www/mini-site/public/index.php
 curl -ik https://localhost/index.php # Risultato: HTTP 403 Forbidden
 
 # Analisi log:
-sudo tail -n 5 /var/log/apache2/mini-site_error.log
+sudo tail -n 20 /var/log/php8.1-fpm.log
 
 # Risoluzione:
 sudo chmod 644 /var/www/mini-site/public/index.php

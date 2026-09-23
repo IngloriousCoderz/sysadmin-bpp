@@ -11,7 +11,7 @@ java -version
 
 # Creazione del gruppo e utente di sistema per Tomcat
 sudo groupadd --system tomcat
-sudo useradd -s /bin/false -g tomcat -d /opt/tomcat tomcat --system tomcat
+sudo useradd --system -s /usr/sbin/nologin -g tomcat -d /opt/tomcat tomcat
 
 # Download della release specifica da archive.apache.org
 cd /tmp
@@ -28,7 +28,17 @@ sudo chmod g+x conf
 sudo chown -R tomcat webapps/ work/ temp/ logs/
 ```
 
-## Architettura del Container (`server.xml`)
+### Clean-Up di Sicurezza Iniziale (Hardening Applicativo)
+
+In un'installazione di produzione, i pacchetti di default inclusi nella cartella webapps rappresentano un vettore di attacco (vulnerabilità nei sample, esposizione di credenziali su manager/host-manager):
+
+```bash
+# RIMOZIONE APPLICAZIONI DEFAULT E FILE INUTILI
+# Rimuove Manager, Host-Manager, Documentazione ed Esempi
+sudo rm -rf /opt/tomcat/webapps/*
+```
+
+## Architettura e Hardening di `server.xml`
 
 Tomcat è un Servlet Container basato su un'architettura gerarchica definita in `conf/server.xml`.
 
@@ -48,10 +58,10 @@ sudo vim /opt/tomcat/conf/server.xml
   <Server>: Istanza radice dell'intera JVM Tomcat. Non è un contenitore di webapp.
   - port="8005": Porta TCP per i comandi amministrativi locali (loopback).
   - shutdown="SHUTDOWN": Stringa di controllo inviata sulla porta 8005 per lo spegnimento pulito.
-  HARDENING: In produzione impostare port="-1" per disabilitare il socket di shutdown
-  e gestire il ciclo di vita del processo esclusivamente via systemd.
+  HARDENING:
+  - port="-1" in produzione per disabilitare il socket di shutdown e gestire il ciclo di vita del processo esclusivamente via systemd.
 -->
-<Server port="-1" shutdown="SHUTDOWN">
+<Server port="8005" shutdown="SHUTDOWN">
 
   <!--
     ===========================================================================
@@ -122,6 +132,8 @@ sudo vim /opt/tomcat/conf/server.xml
       - connectionTimeout="20000": Drop della connessione inattiva dopo 20 secondi.
       - redirectPort="8443": Porta verso cui reindirizzare se l'app richiede HTTPS (CONFIDENTIAL).
       - maxParameterCount="1000": Protezione contro attacchi DoS basati su form con troppi parametri.
+      HARDENING:
+      - server="Apache": Sovrascrive l'header Server nascondendo la versione di Tomcat
     -->
     <Connector port="8080" protocol="HTTP/1.1"
                connectionTimeout="20000"
@@ -220,6 +232,8 @@ sudo vim /opt/tomcat/conf/server.xml
         - appBase="webapps": Cartella relativa/assoluta da cui caricare le applicazioni (.war o cartelle).
         - unpackWARs="true": Scompatta automaticamente i file .war all'avvio per velocizzare l'esecuzione.
         - autoDeploy="true": Monitora appBase ed esegue il deploy a caldo dei nuovi .war senza riavviare Tomcat.
+        HARDENING:
+        - autoDeploy="false" e unpackWARs="false" (se possibile) in produzione impediscono il caricamento incontrollato o la modifica a caldo di pacchetti WAR.
       -->
       <Host name="localhost" appBase="webapps"
             unpackWARs="true" autoDeploy="true">
@@ -238,6 +252,24 @@ sudo vim /opt/tomcat/conf/server.xml
                prefix="localhost_access_log" suffix=".txt"
                pattern="%h %l %u %t &quot;%r&quot; %s %b" />
 
+        <!-- HARDENING:
+
+        VALVE 1: Offuscamento degli Errori (Previene Stack Trace ed esposizione versioni)
+        <Valve className="org.apache.catalina.valves.ErrorReportValve"
+               showServerInfo="false"
+               showReport="false" />
+
+        VALVE 2: Gestione Corretta degli IP Reali dietro Reverse Proxy / Load Balancer
+        <Valve className="org.apache.catalina.valves.RemoteIpValve"
+               internalProxies="127\.0\.0\.1|10\.\d+\.\d+\.\d+"
+               remoteIpHeader="x-forwarded-for"
+               protocolHeader="x-forwarded-proto" />
+
+        VALVE 3: Restrizione IP per eventuali app/manager (Esempio RemoteCIDRValve)
+        <Valve className="org.apache.catalina.valves.RemoteCIDRValve"
+               allow="127.0.0.1, 10.0.0.0/8"
+               denyStatus="403" />
+        -->
       </Host>
     </Engine>
   </Service>
@@ -249,22 +281,31 @@ sudo vim /opt/tomcat/conf/server.xml
 Il punto di svolta nelle versioni recenti è il cambio di namespace imposto dalla transizione da Java EE (Oracle) a Jakarta EE (Eclipse Foundation).
 
 | Caratteristica         | Tomcat 9.x                    | Tomcat 10.x                  | Tomcat 11.x            |
-| ---------------------- | ----------------------------- | ---------------------------- | ---------------------- | --- |
-| **Specifica EE**       | Java EE 8                     | Jakarta EE 10                | Jakarta EE 11          |     |
+| ---------------------- | ----------------------------- | ---------------------------- | ---------------------- |
+| **Specifica EE**       | Java EE 8                     | Jakarta EE 10                | Jakarta EE 11          |
 | **Namespace Package**  | `javax.servlet.*`             | `jakarta.servlet.*`          | `jakarta.servlet.*`    |
-| **Target Applicativo** | Applicazioni Legacy / Java 8+ | App Moderne / Spring Boot 3+ | App Moderne / Java 21+ |
+| **Target Applicativo** | Applicazioni Legacy / Java 8+ | App Moderne / Spring Boot 3+ | App Moderne / Java 17+ |
 
 ### Strategia di Migrazione (.WAR Legacy)
 
 Un file `.war` sviluppato per Tomcat 9 con pacchetti `javax.servlet.*` solleverà eccezioni `ClassNotFoundException`su Tomcat 10 o 11.
 
 1. **Migrazione Codice Sorgente (soluzione ideale)**: Aggiornare il codice e le dipendenze in `pom.xml`/`build.gradle` sostituendo gli import `javax.` con `jakarta.`.
+   - **CAMBIANO**: `javax.servlet.*`, `javax.persistence.*`, `javax.websocket.*`, `javax.faces.*`, `javax.ejb.*`, `javax.mail.*`, `javax.jms.*`, `javax.annotation.*`, `javax.inject.*`, `javax.validation.*`, `javax.ws.rs.*`, `javax.transaction.*`, `javax.xml.bind.*`, `javax.xml.ws.*`, `javax.xml.soap.*`.
+   - **NON CAMBIANO**: I pacchetti facenti parte di SE/JDK core restano `javax.sql.*`, `javax.crypto.*`, `javax.naming.*`, `javax.net.*`, il resto dei `javax.xml.*`.
+   - Spring Framework 5 $\rightarrow$ **Spring Framework 6** / **Spring Boot 3**.
+   - Hibernate 5 $\rightarrow$ **Hibernate 6**.
 2. **Deploy con Conversione Automatica (Tomcat 10.0 legacy)**: Nelle prime versioni di Tomcat 10 era possibile posizionare il file `.war` nella cartella `webapps-javaee/` invece di `webapps/`: Tomcat eseguiva il tool di conversione al volo durante lo scompattamento del WAR.
 3. **Tomcat Migration Tool for Jakarta EE (soluzione sysadmin)**: Se hai solo il pacchetto `.war` compilato e non i sorgenti, Apache fornisce un tool da riga di comando che converte il bytecode in automatico convertendo le chiamate `javax` in `jakarta`:
 
 ```bash
-java -jar jakartaee-migration-\*-shaded.jar /path/to/app-legacy.war /path/to/app-jakarta.war
+java -jar jakartaee-migration-*-shaded.jar /path/to/app-legacy.war /path/to/app-jakarta.war
 ```
+
+> **ATTENZIONE**: Il tool a riga di comando (`jakartaee-migration-*.jar`) converte il bytecode nei file `.class` ed esegue la sostituzione dei nomi di pacchetto, ma **NON intercetta e NON converte**:
+>
+> - Stringhe nei file di configurazione caricati tramite Reflection (`Class.forName("javax.servlet...")`).
+> - Proprietà in file di configurazione custom (`.properties`, `.yaml`).
 
 ## Systemd Hardening (Single Instance)
 
@@ -301,13 +342,20 @@ Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
 # Esecuzione in foreground diretta gestita da systemd
 ExecStart=/opt/tomcat/bin/catalina.sh run
 # Niente ExecStop
+# 128 = processo fermato da un signal + 15 = signal SIGTERM (graceful shutdown)
+SuccessExitStatus=143
 
 # Gestione ciclo di vita tramite segnali
-KillMode=process
 Restart=on-failure
 RestartSec=10s
 
-# DIRECTORY CONCESSE IN SCRITTURA
+# LIMITI CGROUP DEDICATI PER ISTANZA
+# Togliamo MemoryHigh, che non fa fallire il processo ma lo rallenta soltanto (il kernel comincia a reclamare aggressivamente la page cache facendo throttling)
+# MemoryMax con margine sopra il fabbisogno reale di questa istanza (Xmx512m + Metaspace256m + Thread Stack + overhead nativo ≈ 1170M teorici).
+# Useremo lo stesso valore, ricavato con lo stesso criterio, nel sizing dettagliato della sezione Multi-Istanza.
+MemoryMax=1350M
+
+# DIRECTORY SCRIVIBILI (Principio del Minimo Privilegio)
 # Rende scrivibili solo ed esclusivamente le cartelle specificate, necessarie al funzionamento di Tomcat
 ReadWritePaths=/opt/tomcat/logs /opt/tomcat/temp /opt/tomcat/work /opt/tomcat/webapps
 
@@ -377,6 +425,42 @@ Le concessioni necessarie che impediscono il punteggio 0.2 sono la rete, le `Rea
 
 $$\text{RAM Totale Processo} \approx \text{Heap (-Xmx)} + \text{MaxMetaspace} + (\text{MaxThreads} \times \text{-Xss}) + \text{DirectMemory} + \text{CodeCache}$$
 
+### Impatti Operativi su Swap e OOM Killer
+
+1. **RSS (Resident Set Size) vs `-Xmx`**: La RAM allocata nel sistema operativo dal processo Java (evidenziata con `top` o `ps aux`) sarà sempre maggiore di `-Xmx`, perché include le aree native (Thread Stack, Metaspace, GC Overhead, JIT Code Cache).
+2. **Swap e Risposte del Server**: Quando la RAM fisica della macchina finisce e il sistema va in Swap, la JVM subisce rallentamenti drammatici durante le fasi di Stop-The-World del Garbage Collector, trasformando pause di millisecondi in blocchi di diversi secondi (con conseguenti timeout HTTP 504 dei proxy).
+3. **Out-of-Memory: Java vs Kernel Linux**:
+   - **`java.lang.OutOfMemoryError` (In-JVM)**: La JVM è viva ma ha esaurito lo spazio nell'Heap (o nel Metaspace). Genera il dump `.hprof` e si arresta se configurata con `-XX:+ExitOnOutOfMemoryError`.
+   - **Kernel OOM Killer (OS)**: Il Kernel Linux esaurisce la RAM totale e lo Swap della macchina e uccide brutalmente il processo java inviando un segnale `SIGKILL` (Exit Code 137). In questo scenario non viene generato alcun file `.hprof`.
+   - Per diagnosticare un attacco dell'OOM Killer del kernel:
+
+```bash
+# Per verificare se il processo è stato ucciso dal MemCG OOM Killer (limite MemoryMax di Systemd)
+# oppure dall'OOM Killer di sistema (RAM fisica esaurita):
+
+# 1. Ricerca case-insensitive nei log di sistema tramite journalctl
+sudo journalctl -k -g 'out of memory'
+
+# 2. In alternativa, ricerca case-insensitive tramite dmesg
+sudo dmesg -T | grep -i oom
+```
+
+### NMT (Native Memory Tracking)
+
+Per diagnosticare dove la JVM stia allocando la RAM nativa al di fuori dell'Heap:
+
+1. Aggiungi a `setenv.sh`: `-XX:NativeMemoryTracking=summary` (vedi sotto)
+2. Esegui la diagnosi a runtime via CLI:
+
+```bash
+# Per eseguire jcmd con PrivateTmp=true e permessi utente corretti:
+# 1. Recupera il PID dell'istanza
+PID=$(pgrep -f "tomcat.*node1")
+
+# 2. Esegui jcmd all'interno del namespace mount della unit Systemd usando l'utente tomcat
+sudo nsenter -t $PID -m sudo -u tomcat jcmd $PID VM.native_memory summary
+```
+
 ### Tuning tramite setenv.sh
 
 ```bash
@@ -411,7 +495,10 @@ CATALINA_OPTS="$CATALINA_OPTS -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/
 # Termina automaticamente al primo OOM
 CATALINA_OPTS="$CATALINA_OPTS -XX:+ExitOnOutOfMemoryError"
 
-# 6. GC LOGGING (Tracciamento performance Garbage Collection)
+# 6. NATIVE MEMORY TRACKING
+CATALINA_OPTS="$CATALINA_OPTS -XX:NativeMemoryTracking=summary"
+
+# 7. GC LOGGING (Tracciamento performance Garbage Collection)
 CATALINA_OPTS="$CATALINA_OPTS -Xlog:gc*,gc+phases=debug:file=/opt/tomcat/logs/gc.log:time,uptime,pid:filecount=5,filesize=10m"
 
 export CATALINA_OPTS
@@ -422,7 +509,24 @@ sudo chmod +x /opt/tomcat/bin/setenv.sh
 sudo chown tomcat:tomcat /opt/tomcat/bin/setenv.sh
 ```
 
-### Esercitazione: Simulazione Memory Leak e Riavvio Automatico
+### 1. Interpretazione dei Log del Garbage Collector (`gc.log`)
+
+Analizzando il file `/opt/tomcat/logs/gc.log`, i punti cardine da osservare sono:
+
+- **`Allocation Failure` come causa di una `Pause Young (Normal)`**: La Young Generation è piena, la JVM avvia una pulizia Minor GC. Con G1 (il collector che usiamo) è un evento fisiologico e molto frequente.
+- **`Pause Young (Normal)`**: Pausa breve in cui vengono ripuliti gli oggetti a vita breve.
+- **`Allocation Failure` come causa di una `Pause Full` (o `Full GC`)**: Qui la stessa etichetta è tutt'altro che innocua. Con G1 una Full GC scatta solo come ultima risorsa, quando il collector non riesce a liberare spazio abbastanza in fretta con le normali pause incrementali: il Garbage Collector deve fermarsi e scansionare l'intero Heap (Young + Old Gen) in modalità Stop-The-World, con pause molto più lunghe. Segnale d'allarme: se la frequenza delle Full GC aumenta e lo spazio libero nell'Old Generation dopo ogni ciclo non cresce, l'applicazione soffre di un Memory Leak.
+- **Pause Time Execution**: Verificare che le pause non superino mai il target (`MaxGCPauseMillis=200`). Pause superiori a 1-2 secondi indicano cattivo sizing o swapping della memoria da parte del sistema operativo.
+
+### 2. Analisi dell'Heap Dump (.hprof) con Eclipse MAT (Memory Analyzer Tool)
+
+Quando l'applicazione va in Crash per OOM e genera il file `/opt/tomcat/logs/heap_dump.hprof`, scaricalo ed esaminalo via **Eclipse MAT**:
+
+1. **Leak Suspects Report**: È la prima dashboard generata da MAT. Identifica automaticamente le istanze o i thread che occupano una percentuale anomala dell'Heap (es. _"One instance of `java.util.ArrayList` loaded by `org.apache.catalina.loader.ParallelWebappClassLoader` occupies 85% of the memory"_).
+2. **Dominator Tree**: Mostra l'elenco degli oggetti ordinati per **Retained Heap** (la quantità di memoria che verrebbe liberata se l'oggetto venisse rimosso ed escluso dal Garbage Collection).
+3. **Path to GC Roots**: Cliccando col tasto destro su un oggetto sospetto nel _Dominator Tree $\rightarrow$ Path to GC Roots $\rightarrow$ exclude weak/soft references_. Rivela la catena esatta di riferimenti (es. una variabile `static` o un thread rimasto appeso) che impedisce al Garbage Collector di distruggere l'oggetto.
+
+### Esercitazione 1: OOM della JVM e Riavvio Automatico
 
 ```bash
 sudo mkdir -p /opt/tomcat/webapps/leak
@@ -484,12 +588,91 @@ curl -ik http://localhost:8080/leak/index.jsp # errore 500 subito!
 sudo ls -lh /opt/tomcat/logs/ # dovrebbe esserci un file .hprof (da 64MB o poco meno) e gc.log
 ```
 
+### Esercitazione 2: OOM Killer del Kernel (Systemd MemCG vs Heap Dump)
+
+Per mostrare la differenza fondamentale tra un crash gestito dalla JVM e una terminazione forzata dal sistema operativo, configuriamo uno scenario in cui il limite impostato dal Kernel/Systemd è inferiore alla memoria richiesta o allocabile dall'applicazione.
+
+#### 1. Configurazione del Test
+
+Imposta temporaneamente un parametro `-Xmx` superiore al limite `MemoryMax` della unit Systemd dell'istanza di test (oppure riduci `MemoryMax` su tomcat@node1.service):
+
+```bash
+# Impostiamo il vincolo cgroup di Systemd a 1200MB per node1
+sudo systemctl edit tomcat@node1 --drop-in=override.conf
+```
+
+```ini
+[Service]
+MemoryMax=1200M
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart tomcat@node1
+```
+
+Configura `setenv.sh` di `node1` per consentire un Heap fino a 1400MB (superiore ai 1200MB del cgroup):
+
+```bash
+sudo vim /var/lib/tomcat/instances/node1/bin/setenv.sh
+```
+
+```ini
+CATALINA_OPTS="$CATALINA_OPTS -Xms512m -Xmx1400m"
+```
+
+#### 2. Esecuzione del Test e Generazione dello Stress
+
+Invocando la pagina di leak (`/leak/index.jsp`) o allocando memoria nativa, la JVM tenterà di espandere l'Heap verso i 1400MB.
+
+```bash
+curl -ik http://localhost:8081/leak/index.jsp # una decina di volte, probabilmente
+```
+
+#### 3. Diagnostica e Verifica delle Differenze
+
+Al superamento dei 1200MB, si noteranno i seguenti comportamenti:
+
+1. Assenza di Heap Dump:
+
+```bash
+ls -la /var/lib/tomcat/instances/node1/logs/*.hprof # non c'è
+```
+
+2. Verifica Exit Code di Systemd:
+
+```bash
+sudo systemctl status tomcat@node1 # servizio riavviato dopo essere uscito con status=137/KILL
+```
+
+3. Ispezione dei Log del Kernel:
+
+```bash
+sudo journalctl -k -g 'out of memory' # qualcosa come "Memory cgroup out of memory: Kill process (java) score 950 or sacrifice child Killed process (java) total-vm:... anon-rss:1200100kB"
+```
+
 ## Architettura Multi-Istanza Scalabile (tomcat@.service)
 
 Invece di duplicare manualmente gli script e perdere le impostazioni di hardening, si utilizza la configurazione **CATALINA_HOME** / **CATALINA_BASE** separando i binari dalle singole istanze operative.
 
 - **CATALINA_HOME** (`/opt/tomcat`): Contiene solo i binari e le librerie condivise (`bin/`, `lib/`).
-  ⚬ **CATALINA_BASE** (`/var/lib/tomcat/instances/`): Contiene la configurazione specifica dell'istanza (`conf/`, `logs/`, `temp/`, `webapps/`, `work/`).
+- **CATALINA_BASE** (`/var/lib/tomcat/instances/`): Contiene la configurazione specifica dell'istanza (`conf/`, `logs/`, `temp/`, `webapps/`, `work/`).
+
+### Sizing della Memoria (Esempio Numerico Reale)
+
+Ipotizziamo di disporre di una Virtual Machine con **4 GB** di RAM fisicamente installata:
+
+- Riserva OS + Apache httpd + SSH/monitoring: **1200 MB**
+- Margine di sicurezza non allocato a livello di host (page cache, picchi non pianificati, stabilità del kernel): **196 MB**
+- Budget totale per le 2 Istanze Tomcat: **2700 MB** → **1350 MB** di `MemoryMax` (cgroup) per istanza.
+
+> **Nota**: il margine va sottratto dal budget totale _prima_ di dividerlo tra le istanze, non aggiunto dopo a ciascun `MemoryMax`. Se lo aggiungi dopo (es. "+15% a testa"), la somma dei tetti cgroup può superare la RAM fisica della VM: i singoli servizi restano entro il proprio limite, ma è il kernel a rischiare l'OOM sull'intera macchina se entrambe le istanze lo raggiungono insieme.
+
+Sizing per Singola Istanza Tomcat (il tetto cgroup lascia ~50 MB di margine sopra il fabbisogno teorico, per la Page Cache e i picchi del GC):
+
+$$\begin{aligned} \text{RAM Teorica Istanza} &= \text{Heap (-Xmx)} + \text{MaxMetaspace} + (\text{MaxThreads} \times \text{-Xss}) + \text{Overhead Nativo} \\ 1300\text{ MB} &= 700\text{ MB (-Xmx)} + 256\text{ MB (Metaspace)} + (100 \times 1\text{ MB (-Xss)}) + 244\text{ MB (Native/JIT/NIO)} \end{aligned}$$
+
+Configureremo le istanze con: `-Xms700m -Xmx700m -XX:MaxMetaspaceSize=256m -Xss1024k`, e `MemoryMax=1350M` nella unit systemd. Verifica del budget: $1200 + 196 + (2 \times 1350) = 4096$ MB, cioè l'intera RAM fisica della VM.
 
 ### 1. Preparazione dell'Albero delle Istanze
 
@@ -517,21 +700,43 @@ sudo chown -R tomcat:tomcat /var/lib/tomcat/instances/
 ### 2. Differenziazione delle Porte nei file `server.xml``
 
 ```bash
-sudo vim /opt/tomcat/instances/node1/conf/server.xml # fare altrettanto con node2
+sudo vim /var/lib/tomcat/instances/node1/conf/server.xml # fare altrettanto con node2
 ```
 
 ```ini
 Shutdown port: -1
-Connector HTTP: 8081 # 8082
+Connector HTTP:
+  address: 127.0.0.1
+  port: 8081 # 8082
+  maxThreads: 100
 Connector AJP:
-  port 8009 # 8010
-  address 127.0.0.1
-  secret SecretNodo1 # 2
-  secretRequired true
+  address: 127.0.0.1
+  port: 8009 # 8010
+  maxThreads: 100
+  secret: SecretNodo1 # 2
+  secretRequired: true
 Engine jvmRoute: node1
 ```
 
-### 3. Creazione del Template Systemd (`tomcat@.service`)
+### 3. Tuning della memoria
+
+```bash
+sudo vim /var/lib/tomcat/instances/node1/bin/setenv.sh # fare altrettanto con node2
+```
+
+```ini
+#!/bin/sh
+CATALINA_OPTS="$CATALINA_OPTS -Xms700m -Xmx700m -XX:MetaspaceSize=128m -XX:MaxMetaspaceSize=256m -Xss1024k"
+CATALINA_OPTS="$CATALINA_OPTS -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/tomcat/instances/node1/logs/heap_dump.hprof -XX:+ExitOnOutOfMemoryError"
+export CATALINA_OPTS
+```
+
+```bash
+sudo chmod +x /var/lib/tomcat/instances/node1/bin/setenv.sh # fare altrettanto con node2
+sudo chown tomcat:tomcat /var/lib/tomcat/instances/node1/bin/setenv.sh # fare altrettanto con node2
+```
+
+### 4. Creazione del Template Systemd (`tomcat@.service`)
 
 Il carattere `%i` nel template viene sostituito dinamicamente da systemd con il nome dell'istanza passata dopo la `@` (es. `node1`, `node2`).
 
@@ -556,10 +761,13 @@ Environment="CATALINA_BASE=/var/lib/tomcat/instances/%i"
 Environment="CATALINA_PID=/var/lib/tomcat/instances/%i/temp/tomcat.pid"
 
 ExecStart=/opt/tomcat/bin/catalina.sh run
+# 128 = processo fermato da un signal + 15 = signal SIGTERM (graceful shutdown)
+SuccessExitStatus=143
 
-KillMode=process
 Restart=on-failure
 RestartSec=10s
+
+MemoryMax=1350M
 
 # ISOLAMENTO DINAMICO: Rende scrivibile solo la cartella dell'istanza specifica %i
 ReadWritePaths=/var/lib/tomcat/instances/%i/logs /var/lib/tomcat/instances/%i/temp /var/lib/tomcat/instances/%i/work /var/lib/tomcat/instances/%i/webapps
@@ -601,6 +809,47 @@ sudo systemctl status tomcat@node1 tomcat@node2
 ## Integrato: Load Balancing AJP con Apache Httpd
 
 Ora colleghiamo le due istanze Tomcat a un bilanciatore Apache `httpd` con protocollo binario AJP e _Sticky Sessions_.
+
+### 1. Applicazione per Test Sticky Sessions
+
+Crea su entrambe le istanze un file JSP per visualizzare la rotta del bilanciamento e la sessione attiva:
+
+```bash
+sudo mkdir -p /var/lib/tomcat/instances/node1/webapps/ROOT
+sudo vim /var/lib/tomcat/instances/node1/webapps/ROOT/session.jsp # fare altrettanto con node2
+```
+
+```jsp
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%
+    // Recupera la rotta dal cookie JSESSIONID (es. xxxxx.node1 -> node1)
+    String activeNode = "N/D (Primo Accesso)";
+    String sessionId = request.getSession().getId();
+
+    if (sessionId != null && sessionId.contains(".")) {
+        activeNode = sessionId.substring(sessionId.indexOf(".") + 1);
+    } else {
+        // Fallback: estrae il nome della cartella dell'istanza da catalina.base
+        String catalinaBase = System.getProperty("catalina.base");
+        if (catalinaBase != null) {
+            activeNode = catalinaBase.substring(catalinaBase.lastIndexOf("/") + 1) + " (da catalina.base)";
+        }
+    }
+%>
+<!DOCTYPE html>
+<html>
+<head><title>Test Sticky Session</title></head>
+<body>
+    <h2>Info Nodo Tomcat</h2>
+    <p><strong>JSESSIONID Completo:</strong> <%= sessionId %></p>
+    <p><strong>Nodo Rispondente:</strong> <%= activeNode %></p>
+    <p><strong>Porta Locale Server:</strong> <%= request.getLocalPort() %></p>
+    <p><strong>Data/Ora Server:</strong> <%= new java.util.Date() %></p>
+</body>
+</html>
+```
+
+### 2. VirtualHost Apache Httpd
 
 ```bash
 # Abilitazione dei moduli di bilanciamento su Apache
@@ -670,7 +919,18 @@ sudo a2dissite mini-site.conf # se era ancora abilitato
 sudo a2ensite lb-tomcat.conf
 sudo apache2ctl configtest
 sudo systemctl reload apache2
-
-sudo curl -ik http://localhost # test redirect HTTP -> HTTPS
-sudo curl -ik https://localhost # test bilanciamento HTTPS
 ```
+
+### 3. Test Iniziale Sticky Session (via cURL)
+
+```bash
+# Esegui la prima chiamata salvando i cookie nel file cookie.txt
+curl -i -k -c cookie.txt https://localhost/session.jsp
+
+# L'output mostrerà il cookie JSESSIONID con il suffisso del nodo (es. xxxxxxxx.node1)
+# Esegui le chiamate successive riutilizzando lo stesso cookie:
+curl -i -k -b cookie.txt https://localhost/session.jsp
+curl -i -k -b cookie.txt https://localhost/session.jsp
+```
+
+_Esito atteso_: Il nodo che risponde rimarrà fisso su node1 (o node2), dimostrando l'efficacia dello _sticky routing_.

@@ -56,9 +56,9 @@ vim /etc/ssh/sshd_config.d/00-hardening.conf
 ```ini
 # Richiede un utente non-root che possa usare sudo
 PermitRootLogin no
-# Previene attacchi brute-froce sulle password
+# Previene attacchi brute-force sulle password
 PasswordAuthentication no
-# Abilita l'autenticazione tramie chiave SSH
+# Abilita l'autenticazione tramite chiave SSH
 PubkeyAuthentication yes
 # Riduce la superficie di attacco disabilitando interfacce grafiche
 X11Forwarding no
@@ -106,7 +106,7 @@ ssh ubuntu-lab
 
 ## UFW
 
-UFW (_Uncomplicated Firewall_) non è un firewall autonomo, ma un'interfaccia utente semplificata (frontend) scritta in Python per gestire il filtro pacchetti del kernel Linux (ìptables`/`nftables`).
+UFW (_Uncomplicated Firewall_) non è un firewall autonomo, ma un'interfaccia utente semplificata (frontend) scritta in Python per gestire il filtro pacchetti del kernel Linux (`iptables`/`nftables`).
 
 1. **Default Deny (Principio del Minimo Privilegio)**: Blocca tutto il traffico in ingresso tranne quello esplicitamente autorizzato.
 2. **Stateful Firewall**: UFW sfrutta il tracciamento delle connessioni del kernel (`conntrack`). Quando si consente il traffico in uscita (_outgoing_), la risposta in ingresso viene fatta passare automaticamente.
@@ -120,7 +120,7 @@ sudo ufw allow ssh
  # Abilitazione di Httpd, una volta installato apache2 (02-httpd.md)
 sudo ufw allow 'Apache Full'
 
-# Creazione di un profilo UFW personalizzato per Tomcat, una volta installato (03-tomcat.md)
+# Creazione di un profilo UFW personalizzato per Tomcat, utile per quando faremo l'esercitazione singola istanza (03-tomcat.md)
 sudo vim /etc/ufw/applications.d/tomcat
 ```
 
