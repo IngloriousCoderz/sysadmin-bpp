@@ -520,11 +520,22 @@ Analizzando il file `/opt/tomcat/logs/gc.log`, i punti cardine da osservare sono
 
 ### 2. Analisi dell'Heap Dump (.hprof) con Eclipse MAT (Memory Analyzer Tool)
 
-Quando l'applicazione va in Crash per OOM e genera il file `/opt/tomcat/logs/heap_dump.hprof`, scaricalo ed esaminalo via **Eclipse MAT**:
+Quando l'applicazione va in Crash per OOM e genera il file `/opt/tomcat/logs/heap_dump.hprof`, scaricalo ed esaminalo via **[Eclipse MAT](https://eclipse.dev/mat/download/)**:
 
 1. **Leak Suspects Report**: È la prima dashboard generata da MAT. Identifica automaticamente le istanze o i thread che occupano una percentuale anomala dell'Heap (es. _"One instance of `java.util.ArrayList` loaded by `org.apache.catalina.loader.ParallelWebappClassLoader` occupies 85% of the memory"_).
 2. **Dominator Tree**: Mostra l'elenco degli oggetti ordinati per **Retained Heap** (la quantità di memoria che verrebbe liberata se l'oggetto venisse rimosso ed escluso dal Garbage Collection).
 3. **Path to GC Roots**: Cliccando col tasto destro su un oggetto sospetto nel _Dominator Tree $\rightarrow$ Path to GC Roots $\rightarrow$ exclude weak/soft references_. Rivela la catena esatta di riferimenti (es. una variabile `static` o un thread rimasto appeso) che impedisce al Garbage Collector di distruggere l'oggetto.
+
+_NB_: Eclipse MAT su Mac di default non parte, perché non trova la JVM installata. Una volta installata la OpenJDK 21, aprire il file di configurazione e impostarla:
+
+```bash
+vim /Applications/MemoryAnalyzer.app/Contents/Eclipse/MemoryAnalyzer.ini
+```
+
+```ini
+-vm
+/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home/lib/libjli.dylib
+```
 
 ### Esercitazione 1: OOM della JVM e Riavvio Automatico
 
