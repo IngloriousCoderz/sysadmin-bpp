@@ -455,7 +455,7 @@ Per diagnosticare dove la JVM stia allocando la RAM nativa al di fuori dell'Heap
 ```bash
 # Per eseguire jcmd con PrivateTmp=true e permessi utente corretti:
 # 1. Recupera il PID dell'istanza
-PID=$(pgrep -f "tomcat.*node1")
+PID=$(pgrep -f "tomcat")
 
 # 2. Esegui jcmd all'interno del namespace mount della unit Systemd usando l'utente tomcat
 sudo nsenter -t $PID -m sudo -u tomcat jcmd $PID VM.native_memory summary
@@ -570,11 +570,15 @@ sudo systemctl restart tomcat
 curl -ik http://localhost:8080/leak/index.jsp # errore 500 dopo 5 curl
 ```
 
-Al verificarsi dell'OOM: 1. La JVM scrive il file di dump `/opt/tomcat/logs/heap_dump.hprof`. 2. La flag `-XX:+ExitOnOutOfMemoryError` termina immediatamente il processo Java. 3. Systemd rileva la chiusura con errore e riavvia automaticamente l'istanza dopo 10 secondi.
+Al verificarsi dell'OOM:
+
+1. La JVM scrive il file di dump `/opt/tomcat/logs/heap_dump.hprof`.
+2. La flag `-XX:+ExitOnOutOfMemoryError` termina immediatamente il processo Java.
+3. Systemd rileva la chiusura con errore e riavvia automaticamente l'istanza dopo 10 secondi.
 
 ```bash
 # Verifica della presenza del dump e dei log di riavvio
-ls -lh /opt/tomcat/logs/heap_dump.hprof
+sudo ls -lh /opt/tomcat/logs/heap_dump.hprof
 sudo journalctl -u tomcat.service -n 20 --no-pager
 ```
 
@@ -609,23 +613,23 @@ Imposta temporaneamente un parametro `-Xmx` superiore al limite `MemoryMax` dell
 
 ```bash
 # Impostiamo il vincolo cgroup di Systemd a 1200MB per node1
-sudo systemctl edit tomcat@node1 --drop-in=override.conf
+sudo vim /etc/systemd/system/tomcat.service
 ```
 
 ```ini
-[Service]
+# diminuisci la memoria
 MemoryMax=1200M
 ```
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart tomcat@node1
+sudo systemctl restart tomcat
 ```
 
-Configura `setenv.sh` di `node1` per consentire un Heap fino a 1400MB (superiore ai 1200MB del cgroup):
+Configura `setenv.sh` per consentire un Heap fino a 1400MB (superiore ai 1200MB del cgroup):
 
 ```bash
-sudo vim /var/lib/tomcat/instances/node1/bin/setenv.sh
+sudo vim /opt/tomcat/bin/setenv.sh
 ```
 
 ```ini
@@ -637,7 +641,7 @@ CATALINA_OPTS="$CATALINA_OPTS -Xms512m -Xmx1400m"
 Invocando la pagina di leak (`/leak/index.jsp`) o allocando memoria nativa, la JVM tenterà di espandere l'Heap verso i 1400MB.
 
 ```bash
-curl -ik http://localhost:8081/leak/index.jsp # una decina di volte, probabilmente
+curl -ik http://localhost:8080/leak/index.jsp # una dozzina di volte
 ```
 
 #### 3. Diagnostica e Verifica delle Differenze
@@ -647,19 +651,21 @@ Al superamento dei 1200MB, si noteranno i seguenti comportamenti:
 1. Assenza di Heap Dump:
 
 ```bash
-ls -la /var/lib/tomcat/instances/node1/logs/*.hprof # non c'è
+sudo ls -lh /opt/tomcat/logs/*.hprof # ...e invece c'è, e pesa 1.2GB
 ```
 
 2. Verifica Exit Code di Systemd:
 
 ```bash
-sudo systemctl status tomcat@node1 # servizio riavviato dopo essere uscito con status=137/KILL
+sudo systemctl status tomcat # servizio riavviato, presumibilmente dopo essere uscito con status=137/KILL
 ```
 
 3. Ispezione dei Log del Kernel:
 
 ```bash
-sudo journalctl -k -g 'out of memory' # qualcosa come "Memory cgroup out of memory: Kill process (java) score 950 or sacrifice child Killed process (java) total-vm:... anon-rss:1200100kB"
+sudo journalctl -k -g 'out of memory' # dovrebbe mostrare qualcosa come "Memory cgroup out of memory: Kill process (java) score 950 or sacrifice child Killed process (java) total-vm:... anon-rss:1200100kB", e invece dice "-- No entries --"
+
+sudo dmesg -T | grep -i oom # questo invece mostra qualcosa: "[Sat Sep 26 12:06:55 2026] systemd[1]: Starting Userspace Out-Of-Memory (OOM) Killer..."
 ```
 
 ## Architettura Multi-Istanza Scalabile (tomcat@.service)
@@ -722,11 +728,11 @@ Connector HTTP:
   maxThreads: 100
 Connector AJP:
   address: 127.0.0.1
-  port: 8009 # 8010
+  port: 8010 # 8011
   maxThreads: 100
   secret: SecretNodo1 # 2
   secretRequired: true
-Engine jvmRoute: node1
+Engine jvmRoute: node1 # 2
 ```
 
 ### 3. Tuning della memoria
@@ -826,7 +832,7 @@ Ora colleghiamo le due istanze Tomcat a un bilanciatore Apache `httpd` con proto
 Crea su entrambe le istanze un file JSP per visualizzare la rotta del bilanciamento e la sessione attiva:
 
 ```bash
-sudo mkdir -p /var/lib/tomcat/instances/node1/webapps/ROOT
+sudo mkdir -p /var/lib/tomcat/instances/node1/webapps/ROOT  # fare altrettanto con node2
 sudo vim /var/lib/tomcat/instances/node1/webapps/ROOT/session.jsp # fare altrettanto con node2
 ```
 
@@ -891,11 +897,11 @@ sudo vim /etc/apache2/sites-available/lb-tomcat.conf
     # CONFIGURAZIONE DEL BALANCER AJP
     # Definizione del gruppo logico di bilanciamento (cluster) con nome "tomcatcluster"
     <Proxy "balancer://tomcatcluster">
-        # Primo nodo del cluster: connessione via AJP su porta 8009, identificato come node1, protetto da password AJP
-        BalancerMember "ajp://127.0.0.1:8009" route=node1 secret=SecretNodo1
+        # Primo nodo del cluster: connessione via AJP su porta 8010, identificato come node1, protetto da password AJP
+        BalancerMember "ajp://127.0.0.1:8010" route=node1 secret=SecretNodo1
 
-        # Secondo nodo del cluster: connessione via AJP su porta 8010, identificato come node2, protetto da password AJP
-        BalancerMember "ajp://127.0.0.1:8010" route=node2 secret=SecretNodo2
+        # Secondo nodo del cluster: connessione via AJP su porta 8011, identificato come node2, protetto da password AJP
+        BalancerMember "ajp://127.0.0.1:8011" route=node2 secret=SecretNodo2
 
         # Mantiene l'utente legato allo stesso nodo Tomcat leggendo il suffisso del cookie JSESSIONID (Sticky Sessions)
         ProxySet stickysession=JSESSIONID

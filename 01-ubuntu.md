@@ -50,7 +50,7 @@ I file dentro /etc/ssh/sshd_config.d/ vengono letti in **ordine alfabetico** e i
 > Nota di sicurezza: Prima di riavviare o ricaricare il servizio SSH, **mantieni sempre aperta una seconda sessione terminale** per evitare di rimanere chiuso fuori dal server in caso di errore.
 
 ```bash
-vim /etc/ssh/sshd_config.d/00-hardening.conf
+sudo vim /etc/ssh/sshd_config.d/00-hardening.conf
 ```
 
 ```ini
@@ -125,10 +125,7 @@ sudo vim /etc/ufw/applications.d/tomcat
 ```
 
 ```ini
-[Tomcat]
-title=Tomcat
-description=Apache Tomcat Application Server (Standalone)
-ports=8080/tcp
+e
 ```
 
 ```bash
@@ -210,8 +207,10 @@ include <tunables/global>
 
 /usr/bin/curl {
   include <abstractions/base>
+  # aggiungere anche questo, altrimenti curl non funziona!
   include <abstractions/nameservice>
 
+  /usr/bin/curl mr,
   # Regola di blocco esplicita per la demo
   deny /etc/passwd r,
 }
@@ -276,7 +275,7 @@ Sommando i valori si compongono i permessi: ad esempio `7` (`4 + 2 + 1`) indica 
 
 ```bash
 sudo addgroup corso-group
-sudo adduser --system --no-create-home --ingroup corso-group corso-user
+l
 ```
 
 L'opzione `--system` crea un account dedicato esclusivamente a un servizio o demone.
@@ -298,17 +297,17 @@ sudo chgrp corso-group ~/test_permessi.txt
 
 ```bash
 # Modifica dei permessi
-chmod 644 ~/test_permessi.txt
+sudo chmod 644 ~/test_permessi.txt
 ls -l ~/test_permessi.txt
-chmod 744 ~/test_permessi.txt
+sudo chmod 744 ~/test_permessi.txt
 ls -l ~/test_permessi.txt
-chmod 600 ~/test_permessi.txt
+sudo chmod 600 ~/test_permessi.txt
 ls -l ~/test_permessi.txt
 ```
 
 ```bash
 # Pulizia
-rm ~/test_permessi.txt
+sudo rm ~/test_permessi.txt
 sudo deluser corso-user
 sudo delgroup corso-group
 ```
@@ -331,6 +330,8 @@ Un utente deve poter cambiare la propria password, ma le cifrature risiedono in 
 ls -l /etc/shadow # Accessibile solo a root
 ls -l /usr/bin/passwd # Noterai la 's' nei permessi del proprietario ('rwsr-xr-x')
 ```
+
+cd ch
 
 #### SGID per cartelle condivise
 
@@ -394,7 +395,7 @@ ExecStart=/bin/bash -c "echo 'Infiltrato' > /root/test.txt"
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl start test-hardening.service
-ls -l /root/test.txt # Il file è stato creato!
+sudo ls -l /root/test.txt # Il file è stato creato!
 sudo rm -f /root/test.txt
 ```
 

@@ -90,7 +90,7 @@ _(FPM sta per FastCGI Process Manager)_
 ## VirtualHost HTTP di Base
 
 ```bash
-vim /etc/apache2/sites-available/mini-site.conf
+sudo vim /etc/apache2/sites-available/mini-site.conf
 ```
 
 ```apache
@@ -160,6 +160,17 @@ sudo apache2ctl configtest
 sudo systemctl restart php8.1-fpm
 sudo systemctl restart apache2
 ```
+
+(
+una volta mi è successo che php8.1-fpm non sia riuscito a partire. Per qualche ragione non si era creata una directory necessaria:
+
+```bash
+sudo mkdir -p /run/php
+sudo chown www-data:www-data /run/php
+sudo chmod 755 /run/php
+```
+
+)
 
 ```bash
 # Verifica il funzionamento da terminale
@@ -377,6 +388,14 @@ sudo systemctl reload apache2
 ```bash
 # Provoca l'errore rimuovendo i permessi di lettura:
 sudo chmod 000 /var/www/mini-site/public/index.php
+# Il file risulta ancora visibile:
+curl -ik https://localhost/index.php # Risultato: HTTP 200
+# Prova a riavviare Httpd:
+sudo systemctl restart apache2
+# Il file risulta ancora visibile, perché non gestito direttamente da Apache:
+curl -ik https://localhost/index.php # Risultato: HTTP 200
+# Riavvia il servizio che legge direttamente il file:
+sudo systemctl restart php8.1-fpm
 
 # Test:
 curl -ik https://localhost/index.php # Risultato: HTTP 403 Forbidden
@@ -386,6 +405,7 @@ sudo tail -n 20 /var/log/php8.1-fpm.log
 
 # Risoluzione:
 sudo chmod 644 /var/www/mini-site/public/index.php
+# Per qualche ragione, in questo caso non è necessario riavviare php8.1-fpm
 ```
 
 ### 4. Simulazione Blocco AppArmor su PHP-FPM
@@ -410,7 +430,7 @@ sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.apache2
 sudo systemctl restart apache2 # sempre 200!
 ```
 
-Proviamo a bloccare PHP-FPM:
+Proviamo a invece bloccare PHP-FPM:
 
 ```bash
 # scassa:
@@ -437,13 +457,14 @@ include <tunables/global>
   include <abstractions/openssl>
   include <abstractions/php>
   include <abstractions/postfix-common>
-  include <abstractions/totem>
 
   capability chown,
   capability dac_override,
   capability net_admin,
 
   /usr/sbin/php-fpm8.1 mr,
+  # non dovrebbe essere necessario eliminare questa riga
+  /var/www/mini-site/public/index.php r,
   owner /etc/group r,
   owner /etc/nsswitch.conf r,
   owner /etc/passwd r,
@@ -453,10 +474,10 @@ include <tunables/global>
   owner /run/php/php8.1-fpm.pid w,
   owner /run/php/php8.1-fpm.sock rw,
   owner /run/systemd/notify w,
+  owner /run/systemd/userdb/ r,
   owner /run/systemd/userdb/io.systemd.DynamicUser rw,
   owner /var/log/php8.1-fpm.log w,
-  # commenta via questa riga
-  #owner /var/www/mini-site/public/index.php r,
+
   # aggiungi queste due righe
   deny /var/www/mini-site/ r,
   deny /var/www/mini-site/** rwx,
@@ -479,4 +500,5 @@ sudo tail -n 5 /var/log/apache2/mini-site_error.log # Pemission denied
 # correggi:
 sudo vim /etc/apparmor.d/usr.sbin.php-fpm8.1
 sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.php-fpm8.1
+# Per qualche ragione, in questo caso non è necessario riavviare php8.1-fpm
 ```
