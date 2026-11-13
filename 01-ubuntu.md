@@ -125,7 +125,10 @@ sudo vim /etc/ufw/applications.d/tomcat
 ```
 
 ```ini
-e
+[Tomcat]
+title=Tomcat
+description=Apache Tomcat Application Server (Standalone)
+ports=8080/tcp
 ```
 
 ```bash
@@ -275,7 +278,7 @@ Sommando i valori si compongono i permessi: ad esempio `7` (`4 + 2 + 1`) indica 
 
 ```bash
 sudo addgroup corso-group
-l
+sudo adduser --system --no-create-home --ingroup corso-group corso-user
 ```
 
 L'opzione `--system` crea un account dedicato esclusivamente a un servizio o demone.
@@ -330,8 +333,6 @@ Un utente deve poter cambiare la propria password, ma le cifrature risiedono in 
 ls -l /etc/shadow # Accessibile solo a root
 ls -l /usr/bin/passwd # Noterai la 's' nei permessi del proprietario ('rwsr-xr-x')
 ```
-
-cd ch
 
 #### SGID per cartelle condivise
 
